@@ -49,28 +49,32 @@ async function headers() {
   };
 }
 
-// ── API core caller with auto-retry on Invalid Token ───────────────────────────
-async function apiGet(params, timeout = 30000, isRetry = false) {
+// ── API core caller with robust exponential backoff retries ──────────────────
+async function apiGet(params, timeout = 30000, attempt = 1) {
   const res = await axios.get(`${BASE}/openapi.php`, {
     headers: await headers(),
     params,
     timeout,
   });
 
-  // Handle potential 'Invalid Token' which happens if token was refreshed elsewhere
+  // Handle potential 'Invalid Token' which happens under high-load rate limits
   const dataStr =
     typeof res.data === "string" ? res.data : JSON.stringify(res.data || {});
   if (dataStr.includes("Invalid Token")) {
-    console.warn(
-      `[VetBuddy] Warning: Received 'Invalid Token'. ${isRetry ? "Aborting." : "Clearing token cache and retrying..."}`,
-    );
-    if (!isRetry) {
+    const maxAttempts = 3;
+    if (attempt <= maxAttempts) {
+      const delay = 3000 * attempt; // Exponential pause: 3s, 6s, 9s
+      console.warn(
+        `[VetBuddy] Warning: Received 'Invalid Token' (Attempt ${attempt}/${maxAttempts}). Waiting ${delay / 1000}s for cool-down...`,
+      );
       _token = null; // Invalidate memory cache
       _expiresAt = 0;
-      return apiGet(params, timeout, true); // Retry once with fresh token
+      // Give the API a moment to breathe before refreshing and retrying
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      return apiGet(params, timeout, attempt + 1);
     }
     throw new Error(
-      "VetBuddy API request failed with persistent Invalid Token error.",
+      `VetBuddy API request failed with persistent Invalid Token error after ${maxAttempts} attempts.`,
     );
   }
 

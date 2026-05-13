@@ -256,15 +256,17 @@ async function syncDateRange(fromDate, toDate) {
 
   console.log(`[Sync] ${fromDate} → ${toDate} ...`);
 
-  // Fetch clients first-active in this range (for is_new_client tagging)
-  const [invoices, payments] = await Promise.all([
-    vb.getInvoices({ startdate: from, enddate: to, max_pages: 20 }),
-    vb.getPayments({
-      startpaymentdate: from,
-      endpaymentdate: to,
-      max_pages: 10,
-    }),
-  ]);
+  const invoices = await vb.getInvoices({
+    startdate: from,
+    enddate: to,
+    max_pages: 20,
+  });
+  await new Promise((r) => setTimeout(r, 1000));
+  const payments = await vb.getPayments({
+    startpaymentdate: from,
+    endpaymentdate: to,
+    max_pages: 10,
+  });
 
   // Pull new clients per date group (deterministic tag)
   const dateSet = new Set(
@@ -352,7 +354,7 @@ async function runHistoricalSync(fromDateStr) {
     }
 
     cur.setDate(cur.getDate() + 7);
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 3000));
   }
 
   await refreshStock();
