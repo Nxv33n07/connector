@@ -161,8 +161,10 @@ async function upsertPayments(payments) {
 async function refreshStock() {
   console.log("[Sync] Refreshing stock snapshot...");
   // Removed max_pages cap to load all ~9200 SKUs
-  const stock = await vb.getStock(); 
-  console.log(`[Sync] Fetched ${stock.length} total SKUs from VetBuddy. Preparing batch insert...`);
+  const stock = await vb.getStock();
+  console.log(
+    `[Sync] Fetched ${stock.length} total SKUs from VetBuddy. Preparing batch insert...`,
+  );
 
   const conn = await pool.getConnection();
   try {
@@ -209,7 +211,9 @@ async function refreshStock() {
     const chunkSize = 1000;
     for (let i = 0; i < rows.length; i += chunkSize) {
       const chunk = rows.slice(i, i + chunkSize);
-      const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+      const placeholders = chunk
+        .map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .join(", ");
       const flatParams = chunk.flat();
 
       await conn.execute(
@@ -225,13 +229,17 @@ async function refreshStock() {
            threshold_qty          = VALUES(threshold_qty),
            purchase_cost          = VALUES(purchase_cost),
            stock_status           = VALUES(stock_status)`,
-        flatParams
+        flatParams,
       );
-      console.log(` -> Batched: ${Math.min(i + chunkSize, rows.length)} / ${rows.length} inserted.`);
+      console.log(
+        ` -> Batched: ${Math.min(i + chunkSize, rows.length)} / ${rows.length} inserted.`,
+      );
     }
 
     await conn.commit();
-    console.log(`[Sync] Stock fully refreshed: ${rows.length} items committed.`);
+    console.log(
+      `[Sync] Stock fully refreshed: ${rows.length} items committed.`,
+    );
   } catch (e) {
     await conn.rollback();
     throw e;
@@ -295,21 +303,31 @@ async function syncDateRange(fromDate, toDate) {
   );
 }
 
-// ── Nightly sync: last 3 days + stock refresh ─────────────────────────────────
+// ── Checkpoint-based sync: from last known date in DB → today ────────────────
+// Industry-standard ETL pattern: never assume a fixed window.
+// The DB tells us where it left off; we fill exactly that gap.
+// Handles any absence — 1 day or 100 days — with no duplicates and no gaps.
 async function runNightlySync() {
-  console.log("[Sync] Starting nightly sync...");
+  console.log("[Sync] Starting checkpoint sync...");
   const fmt = (d) => d.toISOString().slice(0, 10);
-  const ago = (n) => {
-    const d = new Date();
-    d.setDate(d.getDate() - n);
-    return d;
-  };
+  const today = fmt(new Date());
+
   try {
-    await syncDateRange(fmt(ago(2)), fmt(new Date()));
+    // Ask the DB: what is the latest invoice date we already have?
+    const [row] = await query(
+      `SELECT DATE_FORMAT(MAX(DATE(invoice_date)), '%Y-%m-%d') AS last_date
+       FROM allpets_invoices`,
+    );
+    // If DB is empty fall back to 30 days ago so first-run gets useful data
+    const fromDate =
+      row?.last_date || fmt(new Date(Date.now() - 30 * 86400000));
+
+    console.log(`[Sync] Checkpoint: ${fromDate} → ${today}`);
+    await syncDateRange(fromDate, today);
     await refreshStock();
-    console.log("[Sync] Nightly sync complete.");
+    console.log("[Sync] Checkpoint sync complete.");
   } catch (e) {
-    console.error("[Sync] Nightly sync failed:", e);
+    console.error("[Sync] Checkpoint sync failed:", e);
   }
 }
 
