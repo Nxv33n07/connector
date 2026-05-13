@@ -135,11 +135,21 @@ async function t3_latency(client) {
   console.log(W("\n TEST 3 · RDS Query Latency  (×5 runs, last 30 days)"));
   sep();
   const latencies = [];
+  const fmtDate = (d) =>
+    d.toLocaleDateString("en-US", {
+      month: "2-digit",
+      day: "2-digit",
+      year: "numeric",
+    });
+  const dashArgs = {
+    from_date: fmtDate(new Date(Date.now() - 30 * 86400000)),
+    to_date: fmtDate(new Date()),
+  };
 
   for (let i = 1; i <= 5; i++) {
     const t = Date.now();
     try {
-      await callTool(client, "get_dashboard");
+      await callTool(client, "get_dashboard", dashArgs);
       const ms = Date.now() - t;
       latencies.push(ms);
       const tag =
@@ -187,10 +197,10 @@ async function t4_consistency(client) {
     try {
       const r = await callTool(client, "get_dashboard", args);
       const text = r?.content?.[0]?.text || "";
-      // Extract key numbers from the formatted dashboard text
-      const revenue = text.match(/Billed\s+[█░]+\s+\*\*(₹[\d,]+)\*\*/)?.[1];
-      const invoices = text.match(/\*\*(\d+) invoices\*\*/)?.[1];
-      const canine = text.match(/Canine\s+[█░]+\s+\*\*(₹[\d,]+)\*\*/)?.[1];
+      // Extract key numbers from HTML KPI cards
+      const revenue = text.match(/class="kpi-val">(₹[\d,]+)</)?.[1];
+      const invoices = text.match(/(\d+) invoices/)?.[1];
+      const canine = text.match(/Canine[\s\S]{1,80}(₹[\d,]+)/)?.[1];
       snapshots.push({ revenue, invoices, canine, len: text.length });
       info(
         `Run ${i} — Revenue: ${revenue}  Invoices: ${invoices}  Canine: ${canine}`,

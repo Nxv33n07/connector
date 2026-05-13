@@ -32,20 +32,23 @@ CREATE TABLE IF NOT EXISTS `allpets_invoice_items` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `allpets_payments` (
-  `payment_id`     VARCHAR(64)   NOT NULL,
-  `payment_date`   DATETIME      DEFAULT NULL,
-  `payment_amount` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
-  `returned`       TINYINT(1)    NOT NULL DEFAULT 0,
-  `invoice_id`     VARCHAR(64)   DEFAULT NULL,
-  `client_id`      VARCHAR(64)   DEFAULT NULL,
-  `payment_method` VARCHAR(64)   DEFAULT NULL,
+  `payment_id`        VARCHAR(64)   NOT NULL,
+  `clinic_id`         VARCHAR(64)   DEFAULT NULL,
+  `client_id`         VARCHAR(64)   DEFAULT NULL,
+  `invoice_id`        VARCHAR(64)   DEFAULT NULL,
+  `payment_date`      DATETIME      DEFAULT NULL,
+  `payment_amount`    DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  `payment_type_name` VARCHAR(64)   DEFAULT NULL,
+  `returned`          TINYINT(1)    NOT NULL DEFAULT 0,
   PRIMARY KEY (`payment_id`),
   KEY `idx_pay_date`          (`payment_date`),
   KEY `idx_pay_returned_date` (`returned`, `payment_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `allpets_stock` (
-  `stock_id`               VARCHAR(64)   DEFAULT NULL,
+  `stock_id`               VARCHAR(64)   NOT NULL,
+  `clinic_id`              VARCHAR(64)   NOT NULL,
+  `clinic_name`            VARCHAR(255)  DEFAULT NULL,
   `stock_name`             VARCHAR(255)  NOT NULL,
   `plan_category_name`     VARCHAR(128)  DEFAULT NULL,
   `plan_sub_category_name` VARCHAR(128)  DEFAULT NULL,
@@ -54,7 +57,7 @@ CREATE TABLE IF NOT EXISTS `allpets_stock` (
   `threshold_qty`          DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   `purchase_cost`          DECIMAL(12,2) NOT NULL DEFAULT 0.00,
   `stock_status`           ENUM('adequate','low','out','negative') NOT NULL DEFAULT 'adequate',
-  `supplier_name`          VARCHAR(255)  DEFAULT NULL,
+  PRIMARY KEY (`stock_id`, `clinic_id`),
   KEY `idx_stock_status`   (`stock_status`),
   KEY `idx_stock_std_cat`  (`std_category`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
