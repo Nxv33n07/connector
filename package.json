@@ -1,0 +1,19 @@
+{
+  "name": "allpets-vetbuddy-mcp",
+  "version": "1.0.0",
+  "description": "AllPets VetBuddy Remote MCP Server — deployable to Render",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "axios": "^1.16.0",
+    "dotenv": "^17.4.2",
+    "express": "^4.19.2"
+  }
+}

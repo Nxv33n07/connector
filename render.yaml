@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: allpets-vetbuddy-mcp
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: VETBUDDY_APP_URL
+        value: http://allvet.thevetbuddy.com/vetbuddy
+      - key: VETBUDDY_UID
+        sync: false          # fill in Render dashboard
+      - key: VETBUDDY_PASSWD
+        sync: false
+      - key: VETBUDDY_PUSH_URL
+        value: http://allvet.thevetbuddy.com
+      - key: VETBUDDY_INSTANCE
+        sync: false
+      - key: VETBUDDY_PUSH_KEY
+        sync: false
+      - key: NODE_ENV
+        value: production
