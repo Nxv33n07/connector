@@ -123,7 +123,13 @@ function buildDashboardText(data, opp) {
     const d = (((a - b) / b) * 100).toFixed(1);
     return { txt: (d > 0 ? "+" : "") + d + "%", up: Number(d) > 0 };
   };
-  const J = (v) => JSON.stringify(v);
+  const J = JSON.stringify;
+  // Days in period + daily avg
+  const periodDays = Math.max(
+    1,
+    Math.round((new Date(toDate) - new Date(fromDate)) / 86400000) + 1,
+  );
+  const avgDaily = totalRevenue / periodDays;
 
   const outstanding = totalRevenue - totalCollected;
   const collRate = totalRevenue
@@ -167,6 +173,19 @@ function buildDashboardText(data, opp) {
     "Others",
   ];
 
+  // ── derived insight for executive summary ──────────────────────────────────
+  const topCatEntry = Object.entries(catTotals).sort((a, b) => b[1] - a[1])[0];
+  const topSpeciesEntry = Object.entries(species).sort(
+    (a, b) => b[1].revenue - a[1].revenue,
+  )[0];
+  const collRateNum = parseFloat(collRate);
+  const collStatus =
+    collRateNum >= 85
+      ? { icon: "✅", msg: "Excellent collection", col: "#10b981" }
+      : collRateNum >= 60
+        ? { icon: "⚠️", msg: "Collections need attention", col: "#f59e0b" }
+        : { icon: "🚨", msg: "Critical: low collections", col: "#ef4444" };
+
   const kpiCard = (label, value, sub, accent, badgeTxt, badgeUp) =>
     `<div class="kpi" style="--a:${accent}">
       <div class="kpi-label">${label}</div>
@@ -176,268 +195,392 @@ function buildDashboardText(data, opp) {
     </div>`;
 
   const oppRow = (label, prev, curr, chgObj) =>
-    `<div class="orow">
-      <span class="olabel">${label}</span>
-      <span class="oprev">${prev}</span>
-      <span class="oarr">${chgObj.up === true ? "▲" : chgObj.up === false ? "▼" : "→"}</span>
-      <span class="ocurr">${curr}</span>
-      <span class="badge ${chgObj.up === true ? "up" : chgObj.up === false ? "dn" : "neu"}" style="font-size:10px">${chgObj.txt}</span>
-    </div>`;
+    `<tr>
+      <td class="td-label">${label}</td>
+      <td class="td-prev">${prev}</td>
+      <td><span class="arr ${chgObj.up === true ? "up" : chgObj.up === false ? "dn" : "neu"}">${chgObj.up === true ? "▲" : chgObj.up === false ? "▼" : "→"}</span></td>
+      <td class="td-curr">${curr}</td>
+      <td><span class="badge ${chgObj.up === true ? "up" : chgObj.up === false ? "dn" : "neu"}">${chgObj.txt}</span></td>
+    </tr>`;
 
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AllPets Analytics</title>
+<title>AllPets Analytics Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"><\/script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"><\/script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#080e1a;color:#e2e8f0;padding:20px;min-height:100vh}
-h1{font-size:22px;font-weight:800;background:linear-gradient(135deg,#60a5fa,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px;padding-bottom:16px;border-bottom:1px solid #1e293b}
-.hdr-meta{text-align:right;font-size:12px;color:#475569}
-.hdr-meta strong{color:#94a3b8}
-.sec{font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin:18px 0 10px;display:flex;align-items:center;gap:8px}
-.sec::after{content:'';flex:1;height:1px;background:#1e293b}
-.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:4px}
-.kpi{background:linear-gradient(145deg,#1a2540,#111827);border:1px solid #2d3f55;border-radius:14px;padding:16px 14px;position:relative;overflow:hidden}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#060b14;color:#e2e8f0;padding:24px;min-height:100vh}
+/* ── Header ── */
+.hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;padding:20px 24px;background:linear-gradient(135deg,#0f1e3a 0%,#0a1628 100%);border:1px solid #1e3a5f;border-radius:16px}
+.hdr-title{font-size:24px;font-weight:900;background:linear-gradient(135deg,#60a5fa,#a78bfa,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:-.5px}
+.hdr-sub{font-size:12px;color:#475569;margin-top:3px}
+.hdr-right{text-align:right}
+.hdr-date{font-size:14px;font-weight:700;color:#93c5fd}
+.hdr-ts{font-size:11px;color:#334155;margin-top:3px}
+/* ── Executive Summary ── */
+.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px}
+.sum-card{padding:14px 16px;border-radius:12px;border:1px solid;position:relative;overflow:hidden}
+.sum-icon{font-size:20px;margin-bottom:6px}
+.sum-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;opacity:.7}
+.sum-val{font-size:16px;font-weight:800;margin-top:2px}
+.sum-hint{font-size:10px;opacity:.6;margin-top:2px}
+/* ── Section header ── */
+.sec{font-size:10px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:1.2px;margin:20px 0 10px;display:flex;align-items:center;gap:10px}
+.sec::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,#1e293b,transparent)}
+/* ── KPI cards ── */
+.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:16px}
+.kpi{background:linear-gradient(145deg,#111d35,#0d1626);border:1px solid #1e3352;border-radius:14px;padding:16px 14px;position:relative;overflow:hidden;transition:border-color .2s}
+.kpi:hover{border-color:#3b82f6}
 .kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--a);border-radius:14px 14px 0 0}
-.kpi-label{font-size:10px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px}
-.kpi-val{font-size:20px;font-weight:800;color:#f1f5f9;letter-spacing:-.5px;line-height:1;margin-bottom:4px}
-.kpi-sub{font-size:11px;color:#475569;margin-bottom:6px}
-.badge{display:inline-block;padding:2px 7px;border-radius:20px;font-size:11px;font-weight:600}
-.badge.up{background:rgba(16,185,129,.15);color:#10b981}
-.badge.dn{background:rgba(239,68,68,.15);color:#ef4444}
-.badge.neu{background:rgba(100,116,139,.15);color:#94a3b8}
+.kpi-label{font-size:9px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}
+.kpi-val{font-size:19px;font-weight:900;color:#f1f5f9;letter-spacing:-.5px;line-height:1;margin-bottom:4px}
+.kpi-sub{font-size:10px;color:#334155;margin-bottom:6px}
+.kpi-avg{font-size:10px;color:#64748b;margin-bottom:4px}
+/* ── Badges ── */
+.badge{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:20px;font-size:10px;font-weight:700}
+.badge.up{background:rgba(16,185,129,.12);color:#10b981;border:1px solid rgba(16,185,129,.2)}
+.badge.dn{background:rgba(239,68,68,.12);color:#ef4444;border:1px solid rgba(239,68,68,.2)}
+.badge.neu{background:rgba(100,116,139,.12);color:#64748b;border:1px solid rgba(100,116,139,.2)}
+/* ── Grid layouts ── */
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:14px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
-.grid21{display:grid;grid-template-columns:2fr 1fr;gap:14px;margin-bottom:14px}
-.card{background:linear-gradient(145deg,#1a2540,#111827);border:1px solid #2d3f55;border-radius:14px;padding:18px}
-.ctitle{font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.8px;margin-bottom:14px}
-.ch-sm{position:relative;height:190px}
-.ch-md{position:relative;height:250px}
+.grid31{display:grid;grid-template-columns:3fr 1fr;gap:14px;margin-bottom:14px}
+.grid211{display:grid;grid-template-columns:2fr 1fr 1fr;gap:14px;margin-bottom:14px}
+/* ── Cards ── */
+.card{background:linear-gradient(145deg,#111d35,#0d1626);border:1px solid #1e3352;border-radius:14px;padding:18px}
+.ctitle{font-size:10px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:.9px;margin-bottom:14px;display:flex;align-items:center;gap:6px}
+/* ── Chart heights ── */
+.ch-xs{position:relative;height:160px}
+.ch-sm{position:relative;height:200px}
+.ch-md{position:relative;height:260px}
 .ch-lg{position:relative;height:300px}
-.leg{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.ch-xl{position:relative;height:340px}
+/* ── Legend ── */
+.leg{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 .leg-i{display:flex;align-items:center;gap:5px;font-size:11px;color:#94a3b8}
-.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.srow{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid #1a2540}
+.leg-val{font-weight:700;color:#e2e8f0}
+.dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+/* ── Stat rows ── */
+.srow{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #0f1e35}
 .srow:last-child{border-bottom:none}
-.slabel{font-size:12px;color:#64748b}
+.slabel{font-size:11px;color:#475569}
 .sval{font-size:13px;font-weight:700;color:#e2e8f0}
-.orow{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #1a2540}
-.orow:last-child{border-bottom:none}
-.olabel{font-size:11px;color:#64748b;width:110px;flex-shrink:0}
-.oprev{font-size:11px;color:#475569}
-.oarr{font-size:10px;color:#475569}
-.ocurr{font-size:12px;font-weight:700;color:#e2e8f0;flex:1}
-.alert{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;margin-bottom:5px;background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.15)}
-.aname{font-size:11px;color:#fca5a5;flex:1;font-weight:500}
-.aqty{font-size:11px;color:#ef4444;font-weight:700}
-.footer{text-align:center;padding:16px 0 2px;color:#1e293b;font-size:10px}
+/* ── Opportunity table ── */
+.opp-table{width:100%;border-collapse:collapse;margin-top:12px}
+.opp-table td{padding:6px 4px;border-bottom:1px solid #0f1e35;font-size:11px}
+.opp-table tr:last-child td{border-bottom:none}
+.td-label{color:#475569;width:90px}
+.td-prev{color:#334155;text-align:right}
+.td-curr{font-weight:700;color:#e2e8f0;text-align:right;padding-right:6px}
+.arr{font-size:9px}
+.arr.up{color:#10b981}
+.arr.dn{color:#ef4444}
+.arr.neu{color:#64748b}
+/* ── Alert rows (mismatch) ── */
+.alert-row{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;border-radius:8px;margin-bottom:4px;background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.12)}
+.alert-name{font-size:11px;color:#fca5a5;flex:1;font-weight:500}
+.alert-qty{font-size:12px;color:#ef4444;font-weight:800}
+/* ── Food / stock table ── */
+.stk-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #0f1e35}
+.stk-row:last-child{border-bottom:none}
+.stk-name{font-size:11px;color:#94a3b8;flex:1}
+.stk-val{font-size:11px;font-weight:700;color:#f59e0b}
+.stk-qty{font-size:10px;color:#475569}
+/* ── Footer ── */
+.footer{text-align:center;padding:20px 0 4px;color:#1e293b;font-size:10px}
 </style></head><body>
 
+<!-- ═══════ HEADER ═══════ -->
 <div class="hdr">
   <div>
-    <h1>🏥 AllPets Clinic — Analytics</h1>
-    <div style="font-size:12px;color:#475569;margin-top:4px">Business Intelligence · RDS-backed · Real-time sync</div>
+    <div class="hdr-title">🏥 AllPets Veterinary Clinic</div>
+    <div class="hdr-sub">Business Intelligence Dashboard · RDS-backed · Auto-synced nightly</div>
   </div>
-  <div class="hdr-meta">
-    <strong>${isoToVB(fromDate)} → ${isoToVB(toDate)}</strong><br>
-    ${invoiceCount} invoices &nbsp;·&nbsp; ${new Date().toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}
+  <div class="hdr-right">
+    <div class="hdr-date">${isoToVB(fromDate)} → ${isoToVB(toDate)} &nbsp;(${periodDays}d)</div>
+    <div class="hdr-ts">Generated ${new Date().toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</div>
   </div>
 </div>
 
+<!-- ═══════ EXECUTIVE SUMMARY ═══════ -->
+<div class="sec">📋 Executive Summary</div>
+<div class="summary">
+  <div class="sum-card" style="background:linear-gradient(135deg,rgba(59,130,246,.08),rgba(59,130,246,.03));border-color:rgba(59,130,246,.25)">
+    <div class="sum-icon">💰</div>
+    <div class="sum-label">Revenue</div>
+    <div class="sum-val" style="color:#60a5fa">${INR(totalRevenue)}</div>
+    <div class="sum-hint">${INR(avgDaily)}/day avg · ${invoiceCount} invoices</div>
+  </div>
+  <div class="sum-card" style="background:linear-gradient(135deg,rgba(${collRateNum >= 85 ? "16,185,129" : collRateNum >= 60 ? "245,158,11" : "239,68,68"},.08),transparent);border-color:rgba(${collRateNum >= 85 ? "16,185,129" : collRateNum >= 60 ? "245,158,11" : "239,68,68"},.25)">
+    <div class="sum-icon">${collStatus.icon}</div>
+    <div class="sum-label">Collections</div>
+    <div class="sum-val" style="color:${collStatus.col}">${collRate}% rate</div>
+    <div class="sum-hint">${INR(outstanding)} outstanding</div>
+  </div>
+  <div class="sum-card" style="background:linear-gradient(135deg,rgba(139,92,246,.08),transparent);border-color:rgba(139,92,246,.25)">
+    <div class="sum-icon">🏆</div>
+    <div class="sum-label">Top Category</div>
+    <div class="sum-val" style="color:#a78bfa">${topCatEntry?.[0] || "—"}</div>
+    <div class="sum-hint">${INR(topCatEntry?.[1] || 0)} · ${PCT(topCatEntry?.[1] || 0, totalRevenue)} of revenue</div>
+  </div>
+  <div class="sum-card" style="background:linear-gradient(135deg,rgba(16,185,129,.08),transparent);border-color:rgba(16,185,129,.25)">
+    <div class="sum-icon">🐾</div>
+    <div class="sum-label">Top Species</div>
+    <div class="sum-val" style="color:#34d399">${topSpeciesEntry?.[0] || "—"}</div>
+    <div class="sum-hint">${topSpeciesEntry?.[1]?.visits || 0} visits · ${INR(topSpeciesEntry?.[1]?.revenue || 0)}</div>
+  </div>
+</div>
+
+<!-- ═══════ KPI CARDS ═══════ -->
 <div class="sec">💰 Revenue KPIs</div>
 <div class="kpis">
-  ${kpiCard("Total Revenue", INR(totalRevenue), `${invoiceCount} invoices`, "#3b82f6", wChg.txt + " WoW", wChg.up)}
-  ${kpiCard("Collected", INR(totalCollected), "Amount received", "#10b981", collRate + "% rate", parseFloat(collRate) >= 85 ? true : parseFloat(collRate) >= 60 ? null : false)}
+  ${kpiCard("Total Revenue", INR(totalRevenue), `${invoiceCount} invoices · ${periodDays}d`, "#3b82f6", wChg.txt + " WoW", wChg.up)}
+  ${kpiCard("Collected", INR(totalCollected), "Payments received", "#10b981", collRate + "% collection rate", collRateNum >= 85 ? true : collRateNum >= 60 ? null : false)}
   ${kpiCard("Outstanding", INR(outstanding), PCT(outstanding, totalRevenue) + " of billed", "#ef4444", "", null)}
-  ${kpiCard("Avg Invoice", INR(avgInv), "Per visit", "#f59e0b", "", null)}
-  ${kpiCard("New Clients", String(newClients), PCT(newClients, newClients + returningClients) + " of total", "#8b5cf6", "", null)}
-  ${kpiCard("Returning", String(returningClients), PCT(returningClients, newClients + returningClients) + " of total", "#ec4899", "", null)}
+  ${kpiCard("Avg / Invoice", INR(avgInv), `vs ${INR(avgDaily)}/day avg`, "#f59e0b", "", null)}
+  ${kpiCard("New Clients", String(newClients), PCT(newClients, newClients + returningClients) + " of visits", "#8b5cf6", "", null)}
+  ${kpiCard("Returning", String(returningClients), PCT(returningClients, newClients + returningClients) + " of visits", "#ec4899", "", null)}
 </div>
 
+<!-- ═══════ 3 DONUTS: DAY/NIGHT · SPECIES · CUSTOMERS ═══════ -->
 <div class="sec">📊 Core Breakdowns</div>
 <div class="grid3">
   <div class="card">
-    <div class="ctitle">🌅 Day vs Night Split</div>
+    <div class="ctitle">🌅 Day vs Night — Invoices</div>
     <div class="ch-sm"><canvas id="cDayNight"></canvas></div>
     <div class="leg">
-      <div class="leg-i"><div class="dot" style="background:#f59e0b"></div>Day — ${dayInvoices} inv · ${INR(dayRevenue)}</div>
-      <div class="leg-i"><div class="dot" style="background:#6366f1"></div>Night — ${nightInvoices} inv · ${INR(nightRevenue)}</div>
+      <div class="leg-i"><div class="dot" style="background:#f59e0b"></div>Day &nbsp;<span class="leg-val">${dayInvoices} inv</span>&nbsp;${INR(dayRevenue)}</div>
+      <div class="leg-i"><div class="dot" style="background:#6366f1"></div>Night &nbsp;<span class="leg-val">${nightInvoices} inv</span>&nbsp;${INR(nightRevenue)}</div>
     </div>
   </div>
   <div class="card">
-    <div class="ctitle">🐾 Species Breakdown</div>
+    <div class="ctitle">🐕🐈 Species — Revenue & Visits</div>
     <div class="ch-sm"><canvas id="cSpecies"></canvas></div>
     <div class="leg">
-      <div class="leg-i"><div class="dot" style="background:#3b82f6"></div>Canine ${species.Canine.visits} visits · ${INR(species.Canine.revenue)}</div>
-      <div class="leg-i"><div class="dot" style="background:#8b5cf6"></div>Feline ${species.Feline.visits} visits · ${INR(species.Feline.revenue)}</div>
-      <div class="leg-i"><div class="dot" style="background:#64748b"></div>Others ${species.Others.visits} visits · ${INR(species.Others.revenue)}</div>
+      <div class="leg-i"><div class="dot" style="background:#3b82f6"></div>🐕 Dog &nbsp;<span class="leg-val">${species.Canine.visits}v</span>&nbsp;${INR(species.Canine.revenue)}</div>
+      <div class="leg-i"><div class="dot" style="background:#a78bfa"></div>🐈 Cat &nbsp;<span class="leg-val">${species.Feline.visits}v</span>&nbsp;${INR(species.Feline.revenue)}</div>
+      <div class="leg-i"><div class="dot" style="background:#475569"></div>Others &nbsp;<span class="leg-val">${species.Others.visits}v</span>&nbsp;${INR(species.Others.revenue)}</div>
     </div>
   </div>
   <div class="card">
-    <div class="ctitle">👥 Customer Cohorts</div>
+    <div class="ctitle">👥 New vs Returning Clients</div>
     <div class="ch-sm"><canvas id="cCustomer"></canvas></div>
     <div class="leg">
-      <div class="leg-i"><div class="dot" style="background:#10b981"></div>New — ${newClients} (${PCT(newClients, newClients + returningClients)})</div>
-      <div class="leg-i"><div class="dot" style="background:#3b82f6"></div>Returning — ${returningClients} (${PCT(returningClients, newClients + returningClients)})</div>
+      <div class="leg-i"><div class="dot" style="background:#10b981"></div>New &nbsp;<span class="leg-val">${newClients}</span>&nbsp;(${PCT(newClients, newClients + returningClients)})</div>
+      <div class="leg-i"><div class="dot" style="background:#3b82f6"></div>Returning &nbsp;<span class="leg-val">${returningClients}</span>&nbsp;(${PCT(returningClients, newClients + returningClients)})</div>
     </div>
   </div>
 </div>
 
+<!-- ═══════ CATEGORY DONUT + SUB-CATEGORY BAR ═══════ -->
 <div class="sec">📈 Category & Sub-Category Revenue</div>
 <div class="grid2">
   <div class="card">
-    <div class="ctitle">Standard Category Split</div>
-    <div class="ch-md"><canvas id="cCategory"></canvas></div>
+    <div class="ctitle">💊 Revenue by Category</div>
+    <div class="ch-lg"><canvas id="cCategory"></canvas></div>
   </div>
   <div class="card">
-    <div class="ctitle">Sub-Category Sales — Top 12</div>
-    <div class="ch-md"><canvas id="cSubCat"></canvas></div>
+    <div class="ctitle">📊 Sub-Category Sales — Top 12</div>
+    <div class="ch-lg"><canvas id="cSubCat"></canvas></div>
   </div>
 </div>
 
-<div class="sec">🎯 Opportunity Areas</div>
+<!-- ═══════ OPPORTUNITY: WoW + MoM ═══════ -->
+<div class="sec">🎯 Opportunity Areas — Week & Month Comparison</div>
 <div class="grid2">
   <div class="card">
-    <div class="ctitle">Week over Week — Category Comparison</div>
-    <div class="ch-lg"><canvas id="cWeek"></canvas></div>
-    <div style="margin-top:12px">
+    <div class="ctitle">📅 Week over Week — Category Revenue</div>
+    <div class="ch-md"><canvas id="cWeek"></canvas></div>
+    <table class="opp-table">
       ${oppRow("Revenue", INR(lastWeek.rev), INR(thisWeek.rev), CHG(thisWeek.rev, lastWeek.rev))}
       ${oppRow("Invoices", String(lastWeek.inv), String(thisWeek.inv), CHG(thisWeek.inv, lastWeek.inv))}
       ${oppRow("New Clients", String(lastWeek.newC), String(thisWeek.newC), CHG(thisWeek.newC, lastWeek.newC))}
-      ${oppRow("Collection", PCT(lastWeek.col, lastWeek.rev), PCT(thisWeek.col, thisWeek.rev), CHG(thisWeek.col / (lastWeek.rev || 1), lastWeek.col / (lastWeek.rev || 1)))}
-    </div>
+      ${oppRow("Collection %", PCT(lastWeek.col, lastWeek.rev), PCT(thisWeek.col, thisWeek.rev), CHG(lastWeek.rev ? thisWeek.col / thisWeek.rev : 0, lastWeek.rev ? lastWeek.col / lastWeek.rev : 0))}
+    </table>
   </div>
   <div class="card">
-    <div class="ctitle">Month over Month — Species Trend</div>
-    <div class="ch-lg"><canvas id="cMonth"></canvas></div>
-    <div style="margin-top:12px">
+    <div class="ctitle">📆 Month over Month — Species Revenue</div>
+    <div class="ch-md"><canvas id="cMonth"></canvas></div>
+    <table class="opp-table">
       ${oppRow("Revenue", INR(lastMonth.rev), INR(thisMonth.rev), mChg)}
       ${oppRow("Invoices", String(lastMonth.inv), String(thisMonth.inv), CHG(thisMonth.inv, lastMonth.inv))}
       ${oppRow("New Clients", String(lastMonth.newC), String(thisMonth.newC), CHG(thisMonth.newC, lastMonth.newC))}
-    </div>
+    </table>
   </div>
 </div>
 
-<div class="sec">💊 Revenue Type & 💳 Payments</div>
+<!-- ═══════ PHARMACY / SERVICE + PAYMENTS ═══════ -->
+<div class="sec">💳 Revenue Type & Payment Methods</div>
 <div class="grid2">
   <div class="card">
-    <div class="ctitle">Pharmacy vs Service Split</div>
+    <div class="ctitle">💊 Pharmacy vs Service Split</div>
     <div class="ch-sm"><canvas id="cPharm"></canvas></div>
-    <div class="leg" style="margin-top:10px">
-      <div class="leg-i"><div class="dot" style="background:#ef4444"></div>Pharmacy — ${INR(revenueSplit?.Pharmacy || 0)} · ${invoiceSplit?.pharmacy || 0} invoices</div>
-      <div class="leg-i"><div class="dot" style="background:#3b82f6"></div>Service — ${INR(revenueSplit?.Service || 0)} · ${invoiceSplit?.service || 0} invoices</div>
+    <div class="leg" style="margin-top:12px">
+      <div class="leg-i"><div class="dot" style="background:#ef4444"></div>Pharmacy &nbsp;<span class="leg-val">${INR(revenueSplit?.Pharmacy || 0)}</span>&nbsp;· ${invoiceSplit?.pharmacy || 0} inv</div>
+      <div class="leg-i"><div class="dot" style="background:#3b82f6"></div>Service &nbsp;<span class="leg-val">${INR(revenueSplit?.Service || 0)}</span>&nbsp;· ${invoiceSplit?.service || 0} inv</div>
     </div>
+    ${returnedPayments?.txns > 0 ? `<div style="margin-top:10px;padding:8px 12px;background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.15);border-radius:8px;font-size:11px;color:#fca5a5">⚠️ Returned: ${returnedPayments.txns} txns · ${INR(returnedPayments.value)}</div>` : ""}
   </div>
   <div class="card">
-    <div class="ctitle">Payment Methods</div>
+    <div class="ctitle">💳 Payment Methods Breakdown</div>
     <div class="ch-sm"><canvas id="cPayments"></canvas></div>
-    ${returnedPayments?.txns > 0 ? `<div style="margin-top:10px;padding:7px 12px;background:rgba(239,68,68,.08);border-radius:8px;font-size:11px;color:#fca5a5">⚠️ Returned: ${returnedPayments.txns} txns · ${INR(returnedPayments.value)}</div>` : ""}
   </div>
 </div>
 
 ${
   stock
     ? `
-<div class="sec">📦 Inventory</div>
-<div class="grid21">
+<!-- ═══════ INVENTORY ═══════ -->
+<div class="sec">📦 Inventory — Closing Stock, Alerts & Mismatches</div>
+
+<!-- Row 1: Status donut + valuation table + mismatch list -->
+<div class="grid211">
   <div class="card">
-    <div class="ctitle">Inventory Status & Valuation</div>
-    <div style="display:flex;gap:20px;align-items:flex-start">
-      <div style="width:160px;flex-shrink:0;position:relative;height:160px"><canvas id="cInv"></canvas></div>
+    <div class="ctitle">📊 Inventory Status Distribution</div>
+    <div style="display:flex;gap:22px;align-items:center">
+      <div style="width:170px;flex-shrink:0;position:relative;height:170px"><canvas id="cInv"></canvas></div>
       <div style="flex:1">
-        <div class="srow"><span class="slabel">Total SKUs</span><span class="sval">${stock.totalItems}</span></div>
-        <div class="srow"><span class="slabel">Closing Valuation</span><span class="sval">${INR(stock.valuation)}</span></div>
-        <div class="srow"><span class="slabel" style="color:#10b981">✅ Adequate</span><span class="sval" style="color:#10b981">${stock.adequateCount} &nbsp;<small style="color:#475569">${PCT(stock.adequateCount, stock.totalItems)}</small></span></div>
-        <div class="srow"><span class="slabel" style="color:#f59e0b">🟡 Low</span><span class="sval" style="color:#f59e0b">${stock.lowCount} &nbsp;<small style="color:#475569">${PCT(stock.lowCount, stock.totalItems)}</small></span></div>
-        <div class="srow"><span class="slabel" style="color:#ef4444">🔴 Out</span><span class="sval" style="color:#ef4444">${stock.outCount} &nbsp;<small style="color:#475569">${PCT(stock.outCount, stock.totalItems)}</small></span></div>
-        <div class="srow"><span class="slabel" style="color:#fbbf24">⚠️ Negative</span><span class="sval" style="color:#fbbf24">${stock.negativeCount} &nbsp;<small style="color:#475569">${PCT(stock.negativeCount, stock.totalItems)}</small></span></div>
+        <div class="srow"><span class="slabel">Total SKUs</span><span class="sval">${stock.totalItems.toLocaleString()}</span></div>
+        <div class="srow"><span class="slabel">Closing Valuation</span><span class="sval" style="color:#60a5fa">${INR(stock.valuation)}</span></div>
+        <div class="srow"><span class="slabel" style="color:#10b981">✅ Adequate</span><span class="sval" style="color:#10b981">${stock.adequateCount.toLocaleString()} <small style="color:#334155">${PCT(stock.adequateCount, stock.totalItems)}</small></span></div>
+        <div class="srow"><span class="slabel" style="color:#f59e0b">🟡 Low Stock</span><span class="sval" style="color:#f59e0b">${stock.lowCount.toLocaleString()} <small style="color:#334155">${PCT(stock.lowCount, stock.totalItems)}</small></span></div>
+        <div class="srow"><span class="slabel" style="color:#ef4444">🔴 Out of Stock</span><span class="sval" style="color:#ef4444">${stock.outCount.toLocaleString()} <small style="color:#334155">${PCT(stock.outCount, stock.totalItems)}</small></span></div>
+        <div class="srow"><span class="slabel" style="color:#fbbf24">⚠️ Negative (Mismatch)</span><span class="sval" style="color:#fbbf24">${stock.negativeCount.toLocaleString()} <small style="color:#334155">${PCT(stock.negativeCount, stock.totalItems)}</small></span></div>
       </div>
     </div>
-    ${
-      stock.subCatStock?.length > 0
-        ? `
-    <div class="ctitle" style="margin-top:16px">Sub-Category Stock Valuation</div>
-    <div style="position:relative;height:200px"><canvas id="cStockSub"></canvas></div>`
-        : ""
-    }
   </div>
   <div class="card">
     <div class="ctitle">⚠️ System vs Physical Mismatch</div>
+    <div style="font-size:10px;color:#334155;margin-bottom:8px">Items billed but not received — negative onhand qty</div>
     ${
       stock.negativeItems?.length > 0
         ? stock.negativeItems
-            .slice(0, 10)
+            .slice(0, 8)
             .map(
               (i) =>
-                `<div class="alert"><span class="aname">${i.name}</span><span class="aqty">${i.onhand_qty}</span></div>`,
+                `<div class="alert-row"><span class="alert-name">${i.name}</span><span class="alert-qty">${i.onhand_qty}</span></div>`,
             )
             .join("")
-        : `<div style="font-size:12px;color:#10b981;padding:12px 0">✅ No mismatches detected</div>`
+        : `<div style="font-size:12px;color:#10b981;padding:10px 0">✅ No mismatches detected</div>`
     }
+  </div>
+  <div class="card">
+    <div class="ctitle">🔴 Out / 🟡 Low Stock</div>
     ${
       stock.outItems?.length > 0
-        ? `
-    <div class="ctitle" style="margin-top:14px">🔴 Out of Stock</div>
+        ? `<div style="font-size:10px;font-weight:700;color:#ef4444;margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Out of Stock</div>
     ${stock.outItems
-      .slice(0, 6)
+      .slice(0, 5)
       .map(
         (i) =>
-          `<div style="font-size:11px;color:#94a3b8;padding:4px 0;border-bottom:1px solid #1a2540">• ${i.name}</div>`,
+          `<div class="stk-row"><span class="stk-name">• ${i.name}</span><span class="stk-qty">${i.cat || ""}</span></div>`,
       )
       .join("")}`
         : ""
     }
     ${
       stock.lowItems?.length > 0
-        ? `
-    <div class="ctitle" style="margin-top:14px">🟡 Low Stock</div>
+        ? `<div style="font-size:10px;font-weight:700;color:#f59e0b;margin:10px 0 6px;text-transform:uppercase;letter-spacing:.5px">Low Stock</div>
     ${stock.lowItems
-      .slice(0, 6)
+      .slice(0, 5)
       .map(
         (i) =>
-          `<div style="font-size:11px;color:#94a3b8;padding:4px 0;border-bottom:1px solid #1a2540">• ${i.name} &nbsp;<span style="color:#f59e0b">${i.onhand_qty}/${i.threshold_qty}</span></div>`,
+          `<div class="stk-row"><span class="stk-name">• ${i.name}</span><span class="stk-val">${i.onhand_qty}/${i.threshold_qty}</span></div>`,
       )
       .join("")}`
         : ""
     }
   </div>
-</div>`
+</div>
+
+<!-- Row 2: Sub-category valuation bar + Food items -->
+<div class="grid2">
+  <div class="card">
+    <div class="ctitle">📦 Sub-Category Stock Valuation</div>
+    ${stock.subCatStock?.length > 0 ? `<div class="ch-xl"><canvas id="cStockSub"></canvas></div>` : `<div style="color:#334155;font-size:12px;padding:20px 0">No sub-category stock data</div>`}
+  </div>
+  <div class="card">
+    <div class="ctitle">🍖 Food Inventory</div>
+    ${
+      stock.foodItems?.length > 0
+        ? stock.foodItems
+            .slice(0, 10)
+            .map(
+              (i) =>
+                `<div class="stk-row"><span class="stk-name">${i.name}</span><div style="text-align:right"><span class="stk-val">${INR(i.value || 0)}</span><br><span class="stk-qty">qty: ${i.onhand_qty}</span></div></div>`,
+            )
+            .join("")
+        : `<div style="color:#334155;font-size:12px;padding:20px 0">No food items in stock</div>`
+    }
+  </div>
+</div>
+`
     : ""
 }
 
-<div class="footer">AllPets VetBuddy · RDS Analytics · ${new Date().toISOString()}</div>
+<div class="footer">AllPets VetBuddy · Powered by RDS Analytics · ${new Date().toISOString()}</div>
 
 <script>
+Chart.register(ChartDataLabels);
 Chart.defaults.color='#64748b';
-Chart.defaults.borderColor='#1e293b';
+Chart.defaults.borderColor='#0f1e35';
 Chart.defaults.font.family='-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
 Chart.defaults.font.size=11;
 
-const inr = v => '₹'+Math.round(v||0).toLocaleString('en-IN');
+const inr=v=>'₹'+Math.round(v||0).toLocaleString('en-IN');
+const pct=(a,b)=>b?((a/b)*100).toFixed(1)+'%':'0%';
+const fmtK=v=>v>=1e5?'₹'+(v/1e5).toFixed(1)+'L':v>=1e3?'₹'+(v/1e3).toFixed(0)+'K':'₹'+v;
 
-new Chart(document.getElementById('cDayNight'),{type:'doughnut',data:{labels:['Day','Night'],datasets:[{data:[${dayInvoices},${nightInvoices}],backgroundColor:['#f59e0b','#6366f1'],borderWidth:0,hoverOffset:5}]},options:{responsive:true,maintainAspectRatio:false,cutout:'68%',plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>' '+ctx.label+': '+ctx.raw+' invoices'}}}}});
+const DL_PCT={id:'datalabels',formatter:(v,ctx)=>{const t=ctx.dataset.data.reduce((a,b)=>a+b,0);return t&&v/t>.04?((v/t)*100).toFixed(0)+'%':'';},color:'#fff',font:{weight:'700',size:11},textStrokeColor:'rgba(0,0,0,.4)',textStrokeWidth:2};
+const DL_INR={id:'datalabels',formatter:(v)=>v>0?inr(v):'',color:'#fff',font:{weight:'700',size:10},textStrokeColor:'rgba(0,0,0,.4)',textStrokeWidth:2};
+const NO_DL={id:'datalabels',display:false};
 
-new Chart(document.getElementById('cSpecies'),{type:'doughnut',data:{labels:['Canine','Feline','Others'],datasets:[{data:[${Math.round(species.Canine.revenue)},${Math.round(species.Feline.revenue)},${Math.round(species.Others.revenue)}],backgroundColor:['#3b82f6','#8b5cf6','#64748b'],borderWidth:0,hoverOffset:5}]},options:{responsive:true,maintainAspectRatio:false,cutout:'68%',plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>' '+ctx.label+': '+inr(ctx.raw)}}}}});
+// Day / Night
+new Chart(document.getElementById('cDayNight'),{type:'doughnut',data:{labels:['Day','Night'],datasets:[{data:[${dayInvoices},${nightInvoices}],backgroundColor:['#f59e0b','#6366f1'],borderWidth:0,hoverOffset:6}]},options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.label+': '+ctx.raw+' invoices ('+pct(ctx.raw,${dayInvoices + nightInvoices})+')'}},datalabels:DL_PCT}}});
 
-new Chart(document.getElementById('cCustomer'),{type:'doughnut',data:{labels:['New','Returning'],datasets:[{data:[${newClients},${returningClients}],backgroundColor:['#10b981','#3b82f6'],borderWidth:0,hoverOffset:5}]},options:{responsive:true,maintainAspectRatio:false,cutout:'68%',plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>' '+ctx.label+': '+ctx.raw}}}}});
+// Species
+new Chart(document.getElementById('cSpecies'),{type:'doughnut',data:{labels:['🐕 Dog','🐈 Cat','Others'],datasets:[{data:[${Math.round(species.Canine.revenue)},${Math.round(species.Feline.revenue)},${Math.round(species.Others.revenue)}],backgroundColor:['#3b82f6','#a78bfa','#475569'],borderWidth:0,hoverOffset:6}]},options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.label+': '+inr(ctx.raw)}},datalabels:DL_PCT}}});
 
-new Chart(document.getElementById('cCategory'),{type:'doughnut',data:{labels:${J(catLabels)},datasets:[{data:${J(catVals)},backgroundColor:${J(catColors)},borderWidth:0,hoverOffset:6}]},options:{responsive:true,maintainAspectRatio:false,cutout:'55%',plugins:{legend:{display:true,position:'right',labels:{padding:12,boxWidth:10,color:'#94a3b8',borderRadius:3}},tooltip:{callbacks:{label:ctx=>' '+ctx.label+': '+inr(ctx.raw)+' ('+((ctx.raw/${Math.round(totalRevenue) || 1})*100).toFixed(1)+'%)'}}}}});
+// Customers
+new Chart(document.getElementById('cCustomer'),{type:'doughnut',data:{labels:['New','Returning'],datasets:[{data:[${newClients},${returningClients}],backgroundColor:['#10b981','#3b82f6'],borderWidth:0,hoverOffset:6}]},options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.label+': '+ctx.raw+' ('+pct(ctx.raw,${newClients + returningClients})+')'}},datalabels:DL_PCT}}});
 
-new Chart(document.getElementById('cSubCat'),{type:'bar',data:{labels:${J(subTop.map((s) => (s.name.length > 22 ? s.name.slice(0, 20) + "…" : s.name)))},datasets:[{data:${J(subTop.map((s) => Math.round(s.revenue)))},backgroundColor:'rgba(59,130,246,0.65)',borderColor:'#3b82f6',borderWidth:1,borderRadius:4,hoverBackgroundColor:'#3b82f6'}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>' '+inr(ctx.raw)}}},scales:{x:{grid:{color:'#1a2540'},ticks:{callback:v=>v>=100000?'₹'+(v/100000).toFixed(1)+'L':v>=1000?'₹'+(v/1000).toFixed(0)+'K':v}},y:{grid:{display:false},ticks:{font:{size:10}}}}}});
+// Category donut (large, with ₹ labels)
+new Chart(document.getElementById('cCategory'),{type:'doughnut',data:{labels:${J(catLabels)},datasets:[{data:${J(catVals)},backgroundColor:${J(catColors)},borderWidth:0,hoverOffset:8}]},options:{responsive:true,maintainAspectRatio:false,cutout:'50%',plugins:{legend:{display:true,position:'right',labels:{padding:14,boxWidth:11,color:'#94a3b8',usePointStyle:true}},tooltip:{callbacks:{label:ctx=>ctx.label+': '+inr(ctx.raw)+' ('+pct(ctx.raw,${Math.round(totalRevenue) || 1})+')'}},datalabels:{...DL_PCT,font:{weight:'700',size:10}}}}});
 
-new Chart(document.getElementById('cWeek'),{type:'bar',data:{labels:${J(CAT_KEYS)},datasets:[{label:'Last Week',data:${J(CAT_KEYS.map((k) => Math.round(lastWeek.cats[k] || 0)))},backgroundColor:'rgba(100,116,139,0.4)',borderColor:'#64748b',borderWidth:1,borderRadius:4},{label:'This Week',data:${J(CAT_KEYS.map((k) => Math.round(thisWeek.cats[k] || 0)))},backgroundColor:'rgba(59,130,246,0.65)',borderColor:'#3b82f6',borderWidth:1,borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{color:'#94a3b8',boxWidth:10,padding:10}},tooltip:{callbacks:{label:ctx=>' '+ctx.dataset.label+': '+inr(ctx.raw)}}},scales:{x:{grid:{display:false},ticks:{font:{size:9}}},y:{grid:{color:'#1a2540'},ticks:{callback:v=>v>=100000?'₹'+(v/100000).toFixed(1)+'L':v>=1000?'₹'+(v/1000).toFixed(0)+'K':v}}}}});
+// Sub-category horizontal bar
+new Chart(document.getElementById('cSubCat'),{type:'bar',data:{labels:${J(subCategories.slice(0, 12).map((s) => (s.name.length > 22 ? s.name.slice(0, 20) + "…" : s.name)))},datasets:[{data:${J(subCategories.slice(0, 12).map((s) => Math.round(s.revenue)))},backgroundColor:subColors=${J(subCategories.slice(0, 12).map((_, i) => ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6", "#f97316", "#6366f1", "#84cc16", "#06b6d4", "#a855f7"][i]))},borderWidth:0,borderRadius:5}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>' '+inr(ctx.raw)}},datalabels:{anchor:'end',align:'start',formatter:v=>fmtK(v),color:'#94a3b8',font:{size:10}}},scales:{x:{grid:{color:'#0f1e35'},ticks:{callback:fmtK}},y:{grid:{display:false},ticks:{font:{size:10}}}}}});
 
-new Chart(document.getElementById('cMonth'),{type:'bar',data:{labels:['Canine','Feline','Others'],datasets:[{label:'Last Month',data:[${Math.round(lastMonth.spRevs.Canine || 0)},${Math.round(lastMonth.spRevs.Feline || 0)},${Math.round(lastMonth.spRevs.Others || 0)}],backgroundColor:'rgba(100,116,139,0.4)',borderColor:'#64748b',borderWidth:1,borderRadius:4},{label:'This Month',data:[${Math.round(thisMonth.spRevs.Canine || 0)},${Math.round(thisMonth.spRevs.Feline || 0)},${Math.round(thisMonth.spRevs.Others || 0)}],backgroundColor:['rgba(59,130,246,0.65)','rgba(139,92,246,0.65)','rgba(100,116,139,0.65)'],borderColor:['#3b82f6','#8b5cf6','#64748b'],borderWidth:1,borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{color:'#94a3b8',boxWidth:10,padding:10}},tooltip:{callbacks:{label:ctx=>' '+ctx.dataset.label+': '+inr(ctx.raw)}}},scales:{x:{grid:{display:false}},y:{grid:{color:'#1a2540'},ticks:{callback:v=>v>=100000?'₹'+(v/100000).toFixed(1)+'L':v>=1000?'₹'+(v/1000).toFixed(0)+'K':v}}}}});
+// WoW grouped bar
+new Chart(document.getElementById('cWeek'),{type:'bar',data:{labels:${J(CAT_KEYS)},datasets:[{label:'Last Week',data:${J(CAT_KEYS.map((k) => Math.round(lastWeek.cats[k] || 0)))},backgroundColor:'rgba(71,85,105,.5)',borderColor:'#475569',borderWidth:1,borderRadius:4},{label:'This Week',data:${J(CAT_KEYS.map((k) => Math.round(thisWeek.cats[k] || 0)))},backgroundColor:${J(CAT_KEYS.map((k) => catColors[catLabels.indexOf(k)] || "rgba(59,130,246,.6)"))},borderColor:${J(CAT_KEYS.map((k) => CAT_COLORS[k] || "#3b82f6"))},borderWidth:1,borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{color:'#94a3b8',boxWidth:10,padding:10,usePointStyle:true}},tooltip:{callbacks:{label:ctx=>' '+ctx.dataset.label+': '+inr(ctx.raw)}},datalabels:{display:false}},scales:{x:{grid:{display:false},ticks:{font:{size:9}}},y:{grid:{color:'#0f1e35'},ticks:{callback:fmtK}}}}});
 
-new Chart(document.getElementById('cPharm'),{type:'doughnut',data:{labels:['Pharmacy','Service'],datasets:[{data:[${Math.round(revenueSplit?.Pharmacy || 0)},${Math.round(revenueSplit?.Service || 0)}],backgroundColor:['#ef4444','#3b82f6'],borderWidth:0,hoverOffset:5}]},options:{responsive:true,maintainAspectRatio:false,cutout:'68%',plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>' '+ctx.label+': '+inr(ctx.raw)}}}}});
+// MoM species bar
+new Chart(document.getElementById('cMonth'),{type:'bar',data:{labels:['🐕 Dog','🐈 Cat','Others'],datasets:[{label:'Last Month',data:[${Math.round(lastMonth.spRevs.Canine || 0)},${Math.round(lastMonth.spRevs.Feline || 0)},${Math.round(lastMonth.spRevs.Others || 0)}],backgroundColor:'rgba(71,85,105,.5)',borderColor:'#475569',borderWidth:1,borderRadius:4},{label:'This Month',data:[${Math.round(thisMonth.spRevs.Canine || 0)},${Math.round(thisMonth.spRevs.Feline || 0)},${Math.round(thisMonth.spRevs.Others || 0)}],backgroundColor:['rgba(59,130,246,.65)','rgba(167,139,250,.65)','rgba(71,85,105,.65)'],borderColor:['#3b82f6','#a78bfa','#475569'],borderWidth:1,borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{color:'#94a3b8',boxWidth:10,padding:10,usePointStyle:true}},tooltip:{callbacks:{label:ctx=>' '+ctx.dataset.label+': '+inr(ctx.raw)}},datalabels:{display:false}},scales:{x:{grid:{display:false}},y:{grid:{color:'#0f1e35'},ticks:{callback:fmtK}}}}});
 
-new Chart(document.getElementById('cPayments'),{type:'bar',data:{labels:${J(pmts.map((r) => r.method))},datasets:[{data:${J(pmts.map((r) => Math.round(r.value)))},backgroundColor:${J(pmts.map((_, i) => pmtColors[i % pmtColors.length]))},borderRadius:4,borderWidth:0}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>' '+inr(ctx.raw)}}},scales:{x:{grid:{color:'#1a2540'},ticks:{callback:v=>v>=100000?'₹'+(v/100000).toFixed(1)+'L':v>=1000?'₹'+(v/1000).toFixed(0)+'K':v}},y:{grid:{display:false}}}}});
+// Pharmacy vs Service
+new Chart(document.getElementById('cPharm'),{type:'doughnut',data:{labels:['Pharmacy','Service'],datasets:[{data:[${Math.round(revenueSplit?.Pharmacy || 0)},${Math.round(revenueSplit?.Service || 0)}],backgroundColor:['#ef4444','#3b82f6'],borderWidth:0,hoverOffset:6}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.label+': '+inr(ctx.raw)}},datalabels:DL_PCT}}});
 
-${stock ? `new Chart(document.getElementById('cInv'),{type:'doughnut',data:{labels:['Adequate','Low','Out','Negative'],datasets:[{data:[${stock.adequateCount},${stock.lowCount},${stock.outCount},${stock.negativeCount}],backgroundColor:['#10b981','#f59e0b','#ef4444','#fbbf24'],borderWidth:0,hoverOffset:4}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{display:false}}}});` : ""}
+// Payment methods
+new Chart(document.getElementById('cPayments'),{type:'bar',data:{labels:${J(pmts.map((r) => r.method))},datasets:[{data:${J(pmts.map((r) => Math.round(r.value)))},backgroundColor:${J(pmts.map((_, i) => ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899", "#64748b", "#f97316", "#14b8a6"][i % 8]))},borderRadius:5,borderWidth:0}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>' '+inr(ctx.raw)+' ('+${pmts.length > 0 ? "ctx.dataset.data.reduce((a,b)=>a+b,0)" : "1"}+' total)'}},datalabels:{anchor:'end',align:'start',formatter:v=>fmtK(v),color:'#94a3b8',font:{size:10}}},scales:{x:{grid:{color:'#0f1e35'},ticks:{callback:fmtK}},y:{grid:{display:false}}}}});
 
-${stock?.subCatStock?.length > 0 ? `new Chart(document.getElementById('cStockSub'),{type:'bar',data:{labels:${J(stock.subCatStock.map((r) => ((r.sub_cat || "").length > 20 ? (r.sub_cat || "").slice(0, 18) + "…" : r.sub_cat || "")))},datasets:[{data:${J(stock.subCatStock.map((r) => Math.round(r.value)))},backgroundColor:'rgba(139,92,246,0.65)',borderColor:'#8b5cf6',borderWidth:1,borderRadius:4}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>' '+inr(ctx.raw)+' · '+ctx.dataset.data.reduce((a,b)=>a+b,0)}}},scales:{x:{grid:{color:'#1a2540'},ticks:{callback:v=>v>=100000?'₹'+(v/100000).toFixed(1)+'L':v>=1000?'₹'+(v/1000).toFixed(0)+'K':v}},y:{grid:{display:false},ticks:{font:{size:10}}}}}});` : ""}
+${
+  stock
+    ? `
+// Inventory status donut
+new Chart(document.getElementById('cInv'),{type:'doughnut',data:{labels:['Adequate','Low','Out','Negative'],datasets:[{data:[${stock.adequateCount},${stock.lowCount},${stock.outCount},${stock.negativeCount}],backgroundColor:['#10b981','#f59e0b','#ef4444','#fbbf24'],borderWidth:0,hoverOffset:5}]},options:{responsive:true,maintainAspectRatio:false,cutout:'60%',plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.label+': '+ctx.raw.toLocaleString()+' SKUs ('+pct(ctx.raw,${stock.totalItems})+')'}},datalabels:DL_PCT}}});
+`
+    : ""
+}
+
+${
+  stock?.subCatStock?.length > 0
+    ? `
+// Stock sub-category bar
+new Chart(document.getElementById('cStockSub'),{type:'bar',data:{labels:${J(stock.subCatStock.map((r) => ((r.sub_cat || "").length > 22 ? (r.sub_cat || "").slice(0, 20) + "…" : r.sub_cat || "")))},datasets:[{data:${J(stock.subCatStock.map((r) => Math.round(r.value)))},backgroundColor:'rgba(139,92,246,.65)',borderColor:'#8b5cf6',borderWidth:1,borderRadius:5,label:'Closing Value'}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>' '+inr(ctx.raw)+' · '+ctx.dataIndex+1+' sub-cat'}},datalabels:{anchor:'end',align:'start',formatter:v=>fmtK(v),color:'#94a3b8',font:{size:9}}},scales:{x:{grid:{color:'#0f1e35'},ticks:{callback:fmtK}},y:{grid:{display:false},ticks:{font:{size:10}}}}}});
+`
+    : ""
+}
 <\/script></body></html>`;
 }
 
