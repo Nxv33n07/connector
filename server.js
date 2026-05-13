@@ -544,7 +544,19 @@ function buildMcpServer() {
     },
     async ({ from_date, to_date }) => {
       try {
-        return okText(await getDashboard(from_date, to_date));
+        const html = await getDashboard(from_date, to_date);
+        return {
+          content: [
+            {
+              type: "resource",
+              resource: {
+                uri: "dashboard://allpets",
+                mimeType: "text/html",
+                text: html,
+              },
+            },
+          ],
+        };
       } catch (e) {
         return err(e);
       }
