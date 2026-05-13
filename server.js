@@ -612,11 +612,65 @@ async function getDashboard(fromIso, toIso) {
 function buildMcpServer() {
   const server = new McpServer({ name: "allpets-vetbuddy", version: "2.0.0" });
 
-  // ===========================================================================
-  // 🛡️ ENFORCED DYNAMIC SQL STRATEGY: Rigid analytical tools pruned.
-  // Claude Desktop is now fully directed to generate optimized dynamic SQL queries
-  // natively via execute_sql for 100% accuracy, speed, and zero token bloat.
-  // ===========================================================================
+  // ── Standing instructions prompt ─────────────────────────────────────────────
+  server.prompt(
+    "analyst_instructions",
+    "AllPets analyst role — read this before every conversation",
+    () => ({
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `You are the dedicated business analyst for AllPets Veterinary Clinic.
+Your data lives in AWS RDS MySQL. ALL answers to business questions must come from execute_sql — never guess, never use static knowledge.
+
+═══ RDS SCHEMA ═══════════════════════════════════════════════════════
+TABLE: allpets_invoices
+  invoice_id VARCHAR, invoice_date DATETIME, invoice_amount DECIMAL,
+  shift ENUM('Day','Night'), cancelled TINYINT(0=active,1=cancelled),
+  is_new_client TINYINT(0=returning,1=new), client_id VARCHAR
+
+TABLE: allpets_invoice_items
+  invoice_id, invoice_date DATETIME, item_total DECIMAL,
+  species_group ENUM('Canine','Feline','Others'),
+  std_category VARCHAR  -- values: Prescription | Laboratory | Hospitalization | Consultation | Food | Grooming | Others
+  plan_sub_category_name VARCHAR, sales_id VARCHAR, patient_id VARCHAR
+
+TABLE: allpets_payments
+  payment_id, payment_date DATETIME, payment_amount DECIMAL,
+  payment_type_name VARCHAR, returned TINYINT(0=valid,1=returned),
+  invoice_id VARCHAR, client_id VARCHAR
+
+TABLE: allpets_stock
+  stock_id, clinic_id, stock_name VARCHAR, plan_category_name VARCHAR,
+  plan_sub_category_name VARCHAR, std_category VARCHAR,
+  onhand_qty DECIMAL, threshold_qty DECIMAL, purchase_cost DECIMAL,
+  stock_status ENUM('adequate','low','out','negative')
+
+═══ WORKFLOW FOR EVERY QUERY ════════════════════════════════════════
+Step 1 — call execute_sql with the right SQL to get the data from RDS.
+Step 2 — call render_chart with the results to show a visual chart artifact.
+Step 3 — write a brief insight (2-3 sentences) after the artifact.
+
+ALWAYS follow these 3 steps for every business question. Never skip render_chart.
+
+═══ RULES ════════════════════════════════════════════════════════════
+1. Always filter cancelled=0 for revenue/invoice queries.
+2. Always filter returned=0 for payment queries.
+3. Use DATE(invoice_date) BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD' for date ranges.
+4. Closing stock valuation = SUM(onhand_qty * purchase_cost) WHERE onhand_qty > 0.
+5. System vs physical mismatch = stock WHERE stock_status = 'negative'.
+6. Call get_dashboard ONLY when explicitly asked for "the dashboard" or "full report".
+7. Choose chart types wisely: doughnut for proportions, bar for rankings, line for trends over time, horizontalBar for top-N lists.
+8. Set currency:true whenever values are ₹ amounts.
+9. Always include KPI cards for the key numbers from the query result.
+10. Write a meaningful summary sentence that gives the owner an actionable insight.`,
+          },
+        },
+      ],
+    }),
+  );
 
   // ── HISTORICAL SYNC ───────────────────────────────────────────────────────────
   server.tool(
@@ -638,11 +692,13 @@ function buildMcpServer() {
   // ── DYNAMIC SQL EXECUTOR ───────────────────────────────────────────────────────
   server.tool(
     "execute_sql",
-    "Execute direct SQL read queries against the AWS RDS analytics database. Use this to answer complex questions dynamically via custom aggregations without triggering token exhaustion.",
+    "PRIMARY TOOL — call this before answering ANY business question. Runs a read-only SQL query on the AllPets RDS warehouse. Use for revenue, invoices, species, categories, customers, inventory, trends, payment analysis — everything. Tables: allpets_invoices, allpets_invoice_items, allpets_payments, allpets_stock. Always filter cancelled=0 for invoices, returned=0 for payments. Results come back as JSON rows you then interpret and present clearly to the owner.",
     {
       sql_query: z
         .string()
-        .describe("The SQL SELECT/SHOW/DESCRIBE statement to execute on RDS."),
+        .describe(
+          "SELECT statement to run on RDS. Read-only — SELECT/SHOW/DESCRIBE/EXPLAIN only.",
+        ),
     },
     async ({ sql_query }) => {
       try {
@@ -677,10 +733,237 @@ function buildMcpServer() {
     },
   );
 
+  // ── RENDER CHART — dynamic visual from Claude-supplied spec ──────────────
+  server.tool(
+    "render_chart",
+    "ALWAYS call this after execute_sql to present results visually. Claude decides the chart types and layout based on the data. Renders an interactive Chart.js HTML artifact. Use for every query answer — revenue, trends, species, inventory, payments, anything. Combine up to 4 charts + KPI cards + a summary sentence in one call.",
+    {
+      title: z
+        .string()
+        .describe("Dashboard title, e.g. 'Revenue by Category — May 2026'"),
+      summary: z
+        .string()
+        .optional()
+        .describe(
+          "2-3 sentence executive insight Claude writes after seeing the SQL results",
+        ),
+      kpis: z
+        .array(
+          z.object({
+            label: z.string(),
+            value: z
+              .string()
+              .describe("formatted value, e.g. '₹8,78,841' or '458'"),
+            sub: z.string().optional().describe("subtitle, e.g. '39 invoices'"),
+            trend: z
+              .string()
+              .optional()
+              .describe("trend badge, e.g. '+12% WoW' or '↓5%'"),
+            trend_up: z
+              .boolean()
+              .nullable()
+              .optional()
+              .describe("true=green, false=red, null=neutral"),
+            accent: z
+              .string()
+              .optional()
+              .describe("hex accent colour for the card top border"),
+          }),
+        )
+        .optional()
+        .describe("Up to 6 KPI cards shown at the top"),
+      charts: z
+        .array(
+          z.object({
+            id: z.string().describe("unique canvas id, e.g. 'c1'"),
+            type: z
+              .enum(["bar", "doughnut", "line", "pie", "horizontalBar"])
+              .describe(
+                "chart type — use doughnut for proportions, bar/line for trends, horizontalBar for ranked lists",
+              ),
+            title: z.string(),
+            labels: z.array(z.string()),
+            datasets: z
+              .array(
+                z.object({
+                  label: z.string().optional(),
+                  data: z.array(z.number()),
+                  color: z
+                    .string()
+                    .optional()
+                    .describe("single hex color for this dataset"),
+                  colors: z
+                    .array(z.string())
+                    .optional()
+                    .describe("per-slice colors for doughnut/pie"),
+                }),
+              )
+              .describe(
+                "1 dataset = simple chart, 2 datasets = comparison (e.g. this week vs last week)",
+              ),
+            currency: z
+              .boolean()
+              .optional()
+              .describe(
+                "true if values are ₹ amounts — formats axis and tooltip as INR",
+              ),
+          }),
+        )
+        .describe("1–4 charts to render"),
+    },
+    ({ title, summary, kpis = [], charts = [] }) => {
+      const J = JSON.stringify;
+      const PALETTE = [
+        "#3b82f6",
+        "#10b981",
+        "#f59e0b",
+        "#ef4444",
+        "#8b5cf6",
+        "#ec4899",
+        "#14b8a6",
+        "#f97316",
+        "#6366f1",
+        "#84cc16",
+        "#a855f7",
+        "#06b6d4",
+      ];
+
+      const kpiHtml = kpis.length
+        ? `<div class="kpis">${kpis
+            .map(
+              (k) => `<div class="kpi" style="--a:${k.accent || "#3b82f6"}">
+            <div class="kl">${k.label}</div>
+            <div class="kv">${k.value}</div>
+            ${k.sub ? `<div class="ks">${k.sub}</div>` : ""}
+            ${k.trend ? `<span class="badge ${k.trend_up === true ? "up" : k.trend_up === false ? "dn" : "neu"}">${k.trend}</span>` : ""}
+          </div>`,
+            )
+            .join("")}</div>`
+        : "";
+
+      const summaryHtml = summary ? `<div class="sumbox">${summary}</div>` : "";
+
+      const gridClass =
+        charts.length === 1
+          ? "grid1"
+          : charts.length <= 2
+            ? "grid2"
+            : charts.length === 3
+              ? "grid3"
+              : "grid4";
+
+      const canvasHtml = charts
+        .map((ch) => {
+          const h = ["doughnut", "pie"].includes(ch.type) ? 220 : 260;
+          return `<div class="card"><div class="ctitle">${ch.title}</div><div style="position:relative;height:${h}px"><canvas id="${ch.id}"></canvas></div></div>`;
+        })
+        .join("");
+
+      const chartScripts = charts
+        .map((ch) => {
+          const isDonut = ["doughnut", "pie"].includes(ch.type);
+          const isHBar = ch.type === "horizontalBar";
+          const actualType = isHBar ? "bar" : ch.type;
+          const fmtK = `v=>v>=1e5?'₹'+(v/1e5).toFixed(1)+'L':v>=1e3?'₹'+(v/1e3).toFixed(0)+'K':'₹'+v`;
+          const fmtN = `v=>v>=1e5?(v/1e5).toFixed(1)+'L':v>=1e3?(v/1e3).toFixed(0)+'K':v`;
+          const fmt = ch.currency ? fmtK : fmtN;
+
+          const datasets = ch.datasets
+            .map((ds, di) => {
+              const col = ds.color || PALETTE[di % PALETTE.length];
+              const toRgba = (hex, a) => {
+                const c = hex.replace("#", "");
+                return `rgba(${parseInt(c.slice(0, 2), 16)},${parseInt(c.slice(2, 4), 16)},${parseInt(c.slice(4, 6), 16)},${a})`;
+              };
+              const bgColors = isDonut
+                ? ds.colors
+                  ? J(ds.colors)
+                  : J(ch.labels.map((_, i) => PALETTE[i % PALETTE.length]))
+                : isHBar
+                  ? J(ch.labels.map((_, i) => PALETTE[i % PALETTE.length]))
+                  : `'${toRgba(col, 0.75)}'`;
+
+              return `{label:${J(ds.label || "")},data:${J(ds.data)},backgroundColor:${bgColors},borderColor:${isDonut ? "undefined" : J(col)},borderWidth:${isDonut ? 0 : 1},borderRadius:${isDonut ? 0 : 4},fill:${ch.type === "line" ? "false" : "undefined"},tension:0.35,pointRadius:4}`;
+            })
+            .join(",");
+
+          const dlPlugin = isDonut
+            ? `datalabels:{formatter:(v,ctx)=>{const t=ctx.dataset.data.reduce((a,b)=>a+b,0);return t&&v/t>.05?((v/t)*100).toFixed(0)+'%':''},color:'#fff',font:{weight:'700',size:11},textStrokeColor:'rgba(0,0,0,.4)',textStrokeWidth:2}`
+            : `datalabels:{display:false}`;
+
+          const scales = isDonut
+            ? ""
+            : `,scales:{${isHBar ? "x" : "y"}:{grid:{color:'#0f1e35'},ticks:{callback:${fmt}}},${isHBar ? "y" : "x"}:{grid:{display:false},ticks:{font:{size:10}}}}`;
+
+          return `new Chart(document.getElementById('${ch.id}'),{type:'${actualType}',data:{labels:${J(ch.labels)},datasets:[${datasets}]},options:{${isHBar ? "indexAxis:'y'," : ""}responsive:true,maintainAspectRatio:false,${isDonut ? "cutout:'60%'," : ""}plugins:{legend:{display:${isDonut ? "false" : "true"},position:'top',labels:{color:'#94a3b8',boxWidth:10,padding:10,usePointStyle:true}},tooltip:{callbacks:{label:ctx=>' '+(${ch.currency ? `'₹'+Math.round(ctx.raw).toLocaleString('en-IN')` : `ctx.raw`})}},${dlPlugin}}${scales}}});`;
+        })
+        .join("\n");
+
+      const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title}</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"><\/script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"><\/script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#060b14;color:#e2e8f0;padding:20px}
+.hdr{padding:16px 20px;background:linear-gradient(135deg,#0f1e3a,#0a1628);border:1px solid #1e3a5f;border-radius:14px;margin-bottom:16px}
+.hdr-title{font-size:18px;font-weight:900;background:linear-gradient(135deg,#60a5fa,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hdr-ts{font-size:11px;color:#334155;margin-top:2px}
+.sumbox{padding:14px 16px;background:rgba(59,130,246,.07);border:1px solid rgba(59,130,246,.2);border-radius:10px;font-size:13px;color:#94a3b8;line-height:1.6;margin-bottom:14px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px}
+.kpi{background:linear-gradient(145deg,#111d35,#0d1626);border:1px solid #1e3352;border-radius:12px;padding:14px;position:relative;overflow:hidden}
+.kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--a)}
+.kl{font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px}
+.kv{font-size:18px;font-weight:900;color:#f1f5f9;letter-spacing:-.5px;line-height:1;margin-bottom:3px}
+.ks{font-size:10px;color:#334155;margin-bottom:4px}
+.badge{display:inline-block;padding:2px 7px;border-radius:20px;font-size:10px;font-weight:700}
+.badge.up{background:rgba(16,185,129,.12);color:#10b981;border:1px solid rgba(16,185,129,.2)}
+.badge.dn{background:rgba(239,68,68,.12);color:#ef4444;border:1px solid rgba(239,68,68,.2)}
+.badge.neu{background:rgba(100,116,139,.12);color:#64748b}
+.grid1{display:grid;grid-template-columns:1fr;gap:14px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.grid4{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+.card{background:linear-gradient(145deg,#111d35,#0d1626);border:1px solid #1e3352;border-radius:14px;padding:16px}
+.ctitle{font-size:10px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:.9px;margin-bottom:12px}
+.footer{text-align:center;padding:14px 0 2px;color:#1e293b;font-size:10px}
+</style></head><body>
+<div class="hdr">
+  <div class="hdr-title">📊 ${title}</div>
+  <div class="hdr-ts">AllPets VetBuddy · RDS · ${new Date().toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</div>
+</div>
+${summaryHtml}
+${kpiHtml}
+<div class="${gridClass}">${canvasHtml}</div>
+<div class="footer">Powered by AllPets RDS Analytics</div>
+<script>
+Chart.register(ChartDataLabels);
+Chart.defaults.color='#64748b';
+Chart.defaults.borderColor='#0f1e35';
+Chart.defaults.font.family='-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+Chart.defaults.font.size=11;
+${chartScripts}
+<\/script></body></html>`;
+
+      return {
+        content: [
+          {
+            type: "resource",
+            resource: {
+              uri: "chart://allpets",
+              mimeType: "text/html",
+              text: html,
+            },
+          },
+        ],
+      };
+    },
+  );
+
   // ── DASHBOARD (HTML artifact with Chart.js) ───────────────────────────────
   server.tool(
     "get_dashboard",
-    "Full business analytics dashboard — revenue, day/night split, species, categories, sub-categories, customers, opportunity WoW/MoM, inventory, payment methods. Returns a rich HTML artifact with Chart.js charts.",
+    "VISUAL OVERVIEW ONLY — call this exclusively when the user explicitly asks for 'the dashboard', 'full report', 'show me the dashboard', or 'visual overview'. Do NOT call this for specific business questions — use execute_sql for those. Returns a rich interactive HTML artifact with Chart.js charts covering all key clinic metrics.",
     {
       from_date: z.string().describe("YYYY-MM-DD start date"),
       to_date: z.string().describe("YYYY-MM-DD end date"),
