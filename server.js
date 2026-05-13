@@ -20,15 +20,30 @@ require('dotenv').config();
 const express                               = require('express');
 const { McpServer }                         = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StreamableHTTPServerTransport }     = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
+const { SSEServerTransport }                = require('@modelcontextprotocol/sdk/server/sse.js');
 const { z }                                 = require('zod');
 const fs                                    = require('fs');
 const path                                  = require('path');
 const vb                                    = require('./vetbuddy.js');
 
+// Map to hold active SSE transports by sessionId
+const activeTransports = new Map();
+
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
+
+// Manual Zero-Dependency CORS Middleware
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, mcp-session-id');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
 
 // ── IN-MEMORY DATA WAREHOUSE & CACHE ───────────────────────────────────────────
 let warehouse = {
@@ -778,25 +793,44 @@ function buildMcpServer() {
   return server;
 }
 
-// ── HTTP endpoint — one session per request (stateless) ───────────────────────
-app.post('/mcp', async (req, res) => {
-  const mcpServer = buildMcpServer();
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined, // stateless — no session persistence needed
+// ── HTTP + SSE TRANSPORT (ABSOLUTE COMPATIBILITY WITH CLAUDE CONNECTORS) ──────
+app.get('/mcp', async (req, res) => {
+  console.log('[SSE] Incoming client connection at /mcp...');
+  // Instantiates standard SSE and instructs the client to use '/messages' for sending POST data
+  const transport = new SSEServerTransport('/messages', res);
+  
+  // Save it in memory so we can route incoming messages to it
+  activeTransports.set(transport.sessionId, transport);
+  console.log(`[SSE] Session established: ${transport.sessionId}`);
+
+  res.on('close', () => {
+    console.log(`[SSE] Session closed: ${transport.sessionId}`);
+    activeTransports.delete(transport.sessionId);
   });
-  res.on('close', () => transport.close().catch(() => {}));
+
+  const mcpServer = buildMcpServer();
   try {
     await mcpServer.connect(transport);
-    await transport.handleRequest(req, res, req.body);
-  } catch (err) {
-    console.error('[MCP] Request error:', err);
-    if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
+  } catch (e) {
+    console.error('[SSE] Failed to connect mcp server:', e);
   }
 });
 
-// GET /mcp — required for Claude Desktop compatibility check
-app.get('/mcp', (req, res) => {
-  res.status(405).json({ error: 'Method not allowed. Use POST.' });
+app.post('/messages', async (req, res) => {
+  const { sessionId } = req.query;
+  const transport = activeTransports.get(sessionId);
+  
+  if (!transport) {
+    console.error(`[SSE] Message post failed. Session not found: ${sessionId}`);
+    return res.status(404).json({ error: 'Active session not found.' });
+  }
+  
+  try {
+    await transport.handlePostMessage(req, res, req.body);
+  } catch (err) {
+    console.error('[SSE] Request error on post-message:', err);
+    if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // Health check — Render uses this to confirm the service is up
