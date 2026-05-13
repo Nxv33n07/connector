@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AllPets MCP Connector Server</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --text-color: #e2e8f0;
+            --accent-color: #38bdf8;
+            --card-bg: #1e293b;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            text-align: center;
+        }
+        .container {
+            background: var(--card-bg);
+            padding: 3rem;
+            border-radius: 1rem;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+            max-width: 500px;
+            border: 1px solid #334155;
+        }
+        .status-badge {
+            background-color: #10b981;
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 9999px;
+            font-weight: bold;
+            display: inline-block;
+            margin-bottom: 1.5rem;
+            font-size: 0.875rem;
+            box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
+        }
+        h1 {
+            color: var(--accent-color);
+            margin-bottom: 1rem;
+        }
+        p {
+            color: #94a3b8;
+            line-height: 1.6;
+        }
+        .footer {
+            margin-top: 2rem;
+            font-size: 0.75rem;
+            color: #64748b;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="status-badge">● OPERATIONAL</div>
+        <h1>AllPets MCP Server</h1>
+        <p>Your high-performance VetBuddy to AWS RDS bridge is running smoothly on Render and serving dynamic data insights.</p>
+        <div class="footer">
+            Powered by Model Context Protocol • Connected to RDS
+        </div>
+    </div>
+</body>
+</html>

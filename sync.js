@@ -309,7 +309,7 @@ async function runNightlySync() {
     await refreshStock();
     console.log("[Sync] Nightly sync complete.");
   } catch (e) {
-    console.error("[Sync] Nightly sync failed:", e.message);
+    console.error("[Sync] Nightly sync failed:", e);
   }
 }
 
