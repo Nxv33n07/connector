@@ -692,7 +692,13 @@ ALWAYS follow these 3 steps for every business question. Never skip outputting t
   // ── DYNAMIC SQL EXECUTOR ───────────────────────────────────────────────────────
   server.tool(
     "execute_sql",
-    "PRIMARY TOOL — call this before answering ANY business question. Runs read-only SQL on the AllPets RDS warehouse. Tables: allpets_invoices, allpets_invoice_items, allpets_payments, allpets_stock. Always filter cancelled=0 for invoices, returned=0 for payments. CRITICAL REQUIREMENT: After you receive the results from this tool, you MUST ALWAYS immediately call the 'render_chart' tool next to construct the visual dashboard for the user. DO NOT just respond with text; pairing execute_sql with render_chart is MANDATORY to generate the visual interactive PowerBI-style dashboard.",
+    `PRIMARY TOOL — Runs read-only SQL on RDS. CRITICAL REQUIREMENT: After this, you MUST immediately call 'render_chart' to build the visual dashboard!
+TABLES SCHEMA:
+1. allpets_invoices: invoice_id (VARCHAR), invoice_date (DATETIME), invoice_amount (DECIMAL), shift ('Day'|'Night'), cancelled (0=active,1=cancelled), client_id, is_new_client (0|1)
+2. allpets_invoice_items: invoice_id, invoice_date, item_total (DECIMAL - this is the REVENUE column), species_group ('Canine'|'Feline'|'Others'), std_category ('Prescription'|'Laboratory'|'Hospitalization'|'Consultation'|'Food'|'Grooming'|'Others'), plan_sub_category_name, patient_id
+3. allpets_payments: payment_id, payment_date, payment_amount, payment_type_name, returned (0=active,1=returned), invoice_id
+4. allpets_stock: stock_name, plan_category_name, std_category, onhand_qty, purchase_cost, stock_status ('adequate'|'low'|'out'|'negative')
+Always filter cancelled=0 for revenue, and pair execute_sql with render_chart for every question.`,
     {
       sql_query: z
         .string()
