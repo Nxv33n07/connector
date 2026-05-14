@@ -650,10 +650,14 @@ TABLE: allpets_stock
 
 ═══ WORKFLOW FOR EVERY QUERY ════════════════════════════════════════
 Step 1 — call execute_sql with the right SQL to get the data from RDS.
-Step 2 — call render_chart with the results, and then immediately CREATE a native visual HTML Artifact containing the returned HTML code so Claude Desktop renders the interactive dashboard on the side.
-Step 3 — write a brief insight (2-3 sentences) after creating the visual artifact.
+Step 2 — call render_chart with the results.
+Step 3 — YOUR RESPONSE MUST START WITH THE EXACT <antArtifact> BLOCK FROM THE TOOL RESULT.
 
-ALWAYS follow these 3 steps for every business question. Never skip creating the visual HTML Artifact!
+⚠️ MANDATORY OUTPUT FORMAT — no exceptions:
+• Your response MUST begin with the complete <antArtifact>...</antArtifact> block returned by render_chart — copy it VERBATIM, no truncation.
+• NEVER write any text, greeting, or summary BEFORE the <antArtifact> block.
+• Only AFTER the closing </antArtifact> tag may you write 2-3 sentences of insight.
+• If you do not output the <antArtifact> block first, the chart will not render and the user sees nothing.
 
 ═══ RULES ════════════════════════════════════════════════════════════
 1. Always filter cancelled=0 for revenue/invoice queries.
@@ -955,12 +959,11 @@ ${chartScripts}
         content: [
           {
             type: "text",
-            text: `HTML DASHBOARD CODE:
-=======================================
+            text: `<antArtifact identifier="chart-dashboard" type="text/html" title="${title}">
 ${html}
-=======================================
+</antArtifact>
 
-CRITICAL INSTRUCTION: Use your native capability to generate visual interactive HTML/JS Artifacts! You MUST create an HTML Artifact and render the dashboard code provided above visually. Do NOT print it as code; generate the visual Artifact directly so the user sees the PowerBI-style dashboard in the side pane!`,
+YOUR NEXT RESPONSE MUST START WITH THE ABOVE <antArtifact> BLOCK VERBATIM — paste it character-for-character as the very first thing you write. Do not write any text before it. After the closing </antArtifact> tag you may add 2-3 sentences of insight.`,
           },
         ],
       };
@@ -970,7 +973,7 @@ CRITICAL INSTRUCTION: Use your native capability to generate visual interactive 
   // ── DASHBOARD (HTML artifact with Chart.js) ───────────────────────────────
   server.tool(
     "get_dashboard",
-    "VISUAL OVERVIEW ONLY — call this exclusively when the user explicitly asks for 'the dashboard', 'full report', 'show me the dashboard', or 'visual overview'. Do NOT call this for specific business questions. Returns an interactive HTML string. You MUST use a native HTML Artifact to render this full visual dashboard for the user immediately.",
+    "VISUAL OVERVIEW ONLY — call this exclusively when the user explicitly asks for 'the dashboard', 'full report', 'show me the dashboard', or 'visual overview'. Do NOT call this for specific business questions. Returns an <antArtifact> block — you MUST output it verbatim as the first thing in your response.",
     {
       from_date: z.string().describe("YYYY-MM-DD start date"),
       to_date: z.string().describe("YYYY-MM-DD end date"),
@@ -982,12 +985,11 @@ CRITICAL INSTRUCTION: Use your native capability to generate visual interactive 
           content: [
             {
               type: "text",
-              text: `HTML DASHBOARD CODE:
-=======================================
+              text: `<antArtifact identifier="full-dashboard" type="text/html" title="AllPets Business Intelligence Dashboard">
 ${html}
-=======================================
+</antArtifact>
 
-CRITICAL INSTRUCTION: Use your native capability to generate visual interactive HTML/JS Artifacts! You MUST create an HTML Artifact and render the dashboard code provided above visually. Do NOT print it as code; generate the visual Artifact directly so the user sees the PowerBI-style dashboard in the side pane!`,
+YOUR NEXT RESPONSE MUST START WITH THE ABOVE <antArtifact> BLOCK VERBATIM — paste it character-for-character as the very first thing you write. Do not write any text before it. After the closing </antArtifact> tag you may add 2-3 sentences of insight.`,
             },
           ],
         };
