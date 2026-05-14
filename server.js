@@ -887,7 +887,7 @@ Always filter cancelled=0 for revenue, and pair execute_sql with render_chart fo
                   : J(ch.labels.map((_, i) => PALETTE[i % PALETTE.length]))
                 : isHBar
                   ? J(ch.labels.map((_, i) => PALETTE[i % PALETTE.length]))
-                  : `'${toRgba(col, 0.75)}'`;
+                  : `'${toRgba(col, 0.85)}'`;
 
               return `{label:${J(ds.label || "")},data:${J(ds.data)},backgroundColor:${bgColors},borderColor:${isDonut ? "undefined" : J(col)},borderWidth:${isDonut ? 0 : 1},borderRadius:${isDonut ? 0 : 4},fill:${ch.type === "line" ? "false" : "undefined"},tension:0.35,pointRadius:4}`;
             })
@@ -899,9 +899,9 @@ Always filter cancelled=0 for revenue, and pair execute_sql with render_chart fo
 
           const scales = isDonut
             ? ""
-            : `,scales:{${isHBar ? "x" : "y"}:{grid:{color:'#0f1e35'},ticks:{callback:${fmt}}},${isHBar ? "y" : "x"}:{grid:{display:false},ticks:{font:{size:10}}}}`;
+            : `,scales:{${isHBar ? "x" : "y"}:{grid:{color:'#f1f3f4'},ticks:{callback:${fmt},color:'#5f6368'}},${isHBar ? "y" : "x"}:{grid:{display:false},ticks:{font:{size:10},color:'#5f6368'}}}`;
 
-          return `new Chart(document.getElementById('${ch.id}'),{type:'${actualType}',data:{labels:${J(ch.labels)},datasets:[${datasets}]},options:{${isHBar ? "indexAxis:'y'," : ""}responsive:true,maintainAspectRatio:false,${isDonut ? "cutout:'60%'," : ""}plugins:{legend:{display:${isDonut ? "false" : "true"},position:'top',labels:{color:'#94a3b8',boxWidth:10,padding:10,usePointStyle:true}},tooltip:{callbacks:{label:ctx=>' '+(${ch.currency ? `'₹'+Math.round(ctx.raw).toLocaleString('en-IN')` : `ctx.raw`})}},${dlPlugin}}${scales}}});`;
+          return `new Chart(document.getElementById('${ch.id}'),{type:'${actualType}',data:{labels:${J(ch.labels)},datasets:[${datasets}]},options:{${isHBar ? "indexAxis:'y'," : ""}responsive:true,maintainAspectRatio:false,${isDonut ? "cutout:'60%'," : ""}plugins:{legend:{display:${isDonut ? "false" : "true"},position:'top',labels:{color:'#5f6368',boxWidth:10,padding:10,usePointStyle:true}},tooltip:{callbacks:{label:ctx=>' '+(${ch.currency ? `'₹'+Math.round(ctx.raw).toLocaleString('en-IN')` : `ctx.raw`})}},${dlPlugin}}${scales}}});`;
         })
         .join("\n");
 
@@ -911,41 +911,43 @@ Always filter cancelled=0 for revenue, and pair execute_sql with render_chart fo
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"><\/script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#060b14;color:#e2e8f0;padding:20px}
-.hdr{padding:16px 20px;background:linear-gradient(135deg,#0f1e3a,#0a1628);border:1px solid #1e3a5f;border-radius:14px;margin-bottom:16px}
-.hdr-title{font-size:18px;font-weight:900;background:linear-gradient(135deg,#60a5fa,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.hdr-ts{font-size:11px;color:#334155;margin-top:2px}
-.sumbox{padding:14px 16px;background:rgba(59,130,246,.07);border:1px solid rgba(59,130,246,.2);border-radius:10px;font-size:13px;color:#94a3b8;line-height:1.6;margin-bottom:14px}
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px}
-.kpi{background:linear-gradient(145deg,#111d35,#0d1626);border:1px solid #1e3352;border-radius:12px;padding:14px;position:relative;overflow:hidden}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f4f6f9;color:#202124;padding:16px}
+.hdr{padding:14px 18px;background:#fff;border:1px solid #dadce0;border-radius:12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.hdr-title{font-size:16px;font-weight:700;color:#202124}
+.hdr-ts{font-size:11px;color:#9aa0a6;margin-top:2px}
+.sumbox{padding:12px 16px;background:#e8f0fe;border-left:4px solid #4285f4;border-radius:0 8px 8px 0;font-size:13px;color:#1a73e8;line-height:1.6;margin-bottom:12px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:12px}
+.kpi{background:#fff;border:1px solid #dadce0;border-radius:10px;padding:14px;position:relative;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04)}
 .kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--a)}
-.kl{font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px}
-.kv{font-size:18px;font-weight:900;color:#f1f5f9;letter-spacing:-.5px;line-height:1;margin-bottom:3px}
-.ks{font-size:10px;color:#334155;margin-bottom:4px}
-.badge{display:inline-block;padding:2px 7px;border-radius:20px;font-size:10px;font-weight:700}
-.badge.up{background:rgba(16,185,129,.12);color:#10b981;border:1px solid rgba(16,185,129,.2)}
-.badge.dn{background:rgba(239,68,68,.12);color:#ef4444;border:1px solid rgba(239,68,68,.2)}
-.badge.neu{background:rgba(100,116,139,.12);color:#64748b}
-.grid1{display:grid;grid-template-columns:1fr;gap:14px}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
-.grid4{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
-.card{background:linear-gradient(145deg,#111d35,#0d1626);border:1px solid #1e3352;border-radius:14px;padding:16px}
-.ctitle{font-size:10px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:.9px;margin-bottom:12px}
-.footer{text-align:center;padding:14px 0 2px;color:#1e293b;font-size:10px}
+.kl{font-size:9px;font-weight:700;color:#9aa0a6;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px}
+.kv{font-size:20px;font-weight:800;color:#202124;letter-spacing:-.5px;line-height:1;margin-bottom:3px}
+.ks{font-size:10px;color:#9aa0a6;margin-bottom:4px}
+.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700}
+.badge.up{background:#e6f4ea;color:#137333}
+.badge.dn{background:#fce8e6;color:#c5221f}
+.badge.neu{background:#f1f3f4;color:#5f6368}
+.grid1{display:grid;grid-template-columns:1fr;gap:12px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.grid4{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.card{background:#fff;border:1px solid #dadce0;border-radius:10px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.ctitle{font-size:10px;font-weight:700;color:#9aa0a6;text-transform:uppercase;letter-spacing:.9px;margin-bottom:12px}
+.footer{text-align:center;padding:12px 0 2px;color:#dadce0;font-size:10px}
 </style></head><body>
 <div class="hdr">
-  <div class="hdr-title">📊 ${title}</div>
-  <div class="hdr-ts">AllPets VetBuddy · RDS · ${new Date().toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</div>
+  <div>
+    <div class="hdr-title">📊 ${title}</div>
+    <div class="hdr-ts">AllPets · ${new Date().toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</div>
+  </div>
 </div>
 ${summaryHtml}
 ${kpiHtml}
 <div class="${gridClass}">${canvasHtml}</div>
-<div class="footer">Powered by AllPets RDS Analytics</div>
+<div class="footer">AllPets RDS Analytics</div>
 <script>
 Chart.register(ChartDataLabels);
-Chart.defaults.color='#64748b';
-Chart.defaults.borderColor='#0f1e35';
+Chart.defaults.color='#5f6368';
+Chart.defaults.borderColor='#dadce0';
 Chart.defaults.font.family='-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
 Chart.defaults.font.size=11;
 ${chartScripts}
