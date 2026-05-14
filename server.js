@@ -692,7 +692,7 @@ ALWAYS follow these 3 steps for every business question. Never skip outputting t
   // ── DYNAMIC SQL EXECUTOR ───────────────────────────────────────────────────────
   server.tool(
     "execute_sql",
-    "PRIMARY TOOL — call this before answering ANY business question. Runs a read-only SQL query on the AllPets RDS warehouse. Use for revenue, invoices, species, categories, customers, inventory, trends, payment analysis — everything. Tables: allpets_invoices, allpets_invoice_items, allpets_payments, allpets_stock. Always filter cancelled=0 for invoices, returned=0 for payments. Results come back as JSON rows you then interpret and present clearly to the owner.",
+    "PRIMARY TOOL — call this before answering ANY business question. Runs read-only SQL on the AllPets RDS warehouse. Tables: allpets_invoices, allpets_invoice_items, allpets_payments, allpets_stock. Always filter cancelled=0 for invoices, returned=0 for payments. CRITICAL REQUIREMENT: After you receive the results from this tool, you MUST ALWAYS immediately call the 'render_chart' tool next to construct the visual dashboard for the user. DO NOT just respond with text; pairing execute_sql with render_chart is MANDATORY to generate the visual interactive PowerBI-style dashboard.",
     {
       sql_query: z
         .string()
