@@ -650,10 +650,10 @@ TABLE: allpets_stock
 
 ═══ WORKFLOW FOR EVERY QUERY ════════════════════════════════════════
 Step 1 — call execute_sql with the right SQL to get the data from RDS.
-Step 2 — call render_chart with the results to show a visual chart artifact.
-Step 3 — write a brief insight (2-3 sentences) after the artifact.
+Step 2 — call render_chart with the results, and then immediately OUTPUT the returned HTML inside a standard \`\`\`html ... \`\`\` markdown code block in your response so Claude renders it as a visual Artifact.
+Step 3 — write a brief insight (2-3 sentences) after the HTML artifact block.
 
-ALWAYS follow these 3 steps for every business question. Never skip render_chart.
+ALWAYS follow these 3 steps for every business question. Never skip outputting the HTML artifact block!
 
 ═══ RULES ════════════════════════════════════════════════════════════
 1. Always filter cancelled=0 for revenue/invoice queries.
@@ -736,7 +736,7 @@ ALWAYS follow these 3 steps for every business question. Never skip render_chart
   // ── RENDER CHART — dynamic visual from Claude-supplied spec ──────────────
   server.tool(
     "render_chart",
-    "ALWAYS call this after execute_sql to present results visually. Claude decides the chart types and layout based on the data. Renders an interactive Chart.js HTML artifact. Use for every query answer — revenue, trends, species, inventory, payments, anything. Combine up to 4 charts + KPI cards + a summary sentence in one call.",
+    "ALWAYS call this after execute_sql to present results visually. Claude decides chart types based on data. Returns a complete interactive HTML string which you MUST output in your final response inside an \`\`\`html ... \`\`\` block to render the visual Artifact for the user. Use for every query.",
     {
       title: z
         .string()
@@ -948,12 +948,12 @@ ${chartScripts}
       return {
         content: [
           {
-            type: "resource",
-            resource: {
-              uri: "chart://allpets",
-              mimeType: "text/html",
-              text: html,
-            },
+            type: "text",
+            text: `HTML_DASHBOARD_SOURCE_CODE_BELOW
+=======================================
+${html}
+=======================================
+CRITICAL ACTION REQUIRED: You MUST now output the exact HTML source code provided above verbatim inside a standard \`\`\`html markdown code block in your response. This is essential for Claude to render the visual interactive chart dashboard for the user. Do not summarize, do not alter, just output it directly in an \`\`\`html code block.`,
           },
         ],
       };
@@ -963,7 +963,7 @@ ${chartScripts}
   // ── DASHBOARD (HTML artifact with Chart.js) ───────────────────────────────
   server.tool(
     "get_dashboard",
-    "VISUAL OVERVIEW ONLY — call this exclusively when the user explicitly asks for 'the dashboard', 'full report', 'show me the dashboard', or 'visual overview'. Do NOT call this for specific business questions — use execute_sql for those. Returns a rich interactive HTML artifact with Chart.js charts covering all key clinic metrics.",
+    "VISUAL OVERVIEW ONLY — call this exclusively when the user explicitly asks for 'the dashboard', 'full report', 'show me the dashboard', or 'visual overview'. Do NOT call this for specific business questions. Returns an interactive HTML string which you MUST output in your final response inside an \`\`\`html ... \`\`\` markdown block to render the full clinic dashboard Artifact.",
     {
       from_date: z.string().describe("YYYY-MM-DD start date"),
       to_date: z.string().describe("YYYY-MM-DD end date"),
@@ -974,12 +974,12 @@ ${chartScripts}
         return {
           content: [
             {
-              type: "resource",
-              resource: {
-                uri: "dashboard://allpets",
-                mimeType: "text/html",
-                text: html,
-              },
+              type: "text",
+              text: `HTML_FULL_DASHBOARD_SOURCE_CODE_BELOW
+============================================
+${html}
+============================================
+CRITICAL ACTION REQUIRED: You MUST now output the exact HTML source code provided above verbatim inside a standard \`\`\`html markdown code block in your response. This is required to render the complete interactive business intelligence dashboard for the user. Do not skip this, and do not alter the HTML. Output it inside a standard \`\`\`html block.`,
             },
           ],
         };
