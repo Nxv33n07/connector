@@ -608,268 +608,6 @@ async function getDashboard(fromIso, toIso) {
   return buildDashboardText(data, opp);
 }
 
-// ── SVG chart generator (no dependencies, renders inline in claude.ai) ────────
-function buildChartSVG(title, summary, kpis, charts) {
-  const W = 780;
-  const PAL = [
-    "#4285f4",
-    "#34a853",
-    "#fbbc04",
-    "#ea4335",
-    "#9c27b0",
-    "#ff6d00",
-    "#00bcd4",
-    "#607d8b",
-    "#e91e63",
-    "#009688",
-  ];
-  const esc = (s) =>
-    String(s || "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-  const inr = (v) => "₹" + Math.round(v || 0).toLocaleString("en-IN");
-  const fmt = (v, currency) =>
-    currency
-      ? inr(v)
-      : v >= 1e5
-        ? "₹" + (v / 1e5).toFixed(1) + "L"
-        : v >= 1e3
-          ? "₹" + (v / 1e3).toFixed(0) + "K"
-          : String(Math.round(v));
-  const parts = [];
-  let y = 16;
-
-  // word-wrap helper
-  const wrap = (text, maxCh) => {
-    const words = String(text).split(" ");
-    const lines = [];
-    let cur = "";
-    for (const w of words) {
-      if ((cur ? cur + " " + w : w).length > maxCh) {
-        if (cur) lines.push(cur);
-        cur = w;
-      } else cur = cur ? cur + " " + w : w;
-    }
-    if (cur) lines.push(cur);
-    return lines;
-  };
-
-  // Header bar
-  parts.push(
-    `<rect x="0" y="0" width="${W}" height="${y + 34}" fill="#fff" rx="10"/>`,
-  );
-  parts.push(
-    `<rect x="0" y="0" width="${W}" height="4" fill="#4285f4" rx="10"/>`,
-  );
-  parts.push(
-    `<text x="14" y="${y + 22}" font-family="Arial,Helvetica,sans-serif" font-size="17" font-weight="700" fill="#202124">${esc(title)}</text>`,
-  );
-  const tsText = new Date().toLocaleString("en-IN", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
-  parts.push(
-    `<text x="${W - 12}" y="${y + 22}" font-family="Arial,Helvetica,sans-serif" font-size="10" fill="#9aa0a6" text-anchor="end">${esc(tsText)}</text>`,
-  );
-  y += 48;
-
-  // Summary
-  if (summary) {
-    const lines = wrap(summary, 95);
-    const bh = lines.length * 18 + 16;
-    parts.push(
-      `<rect x="0" y="${y}" width="${W}" height="${bh}" fill="#e8f0fe" rx="8"/>`,
-    );
-    parts.push(
-      `<rect x="0" y="${y}" width="4" height="${bh}" fill="#4285f4" rx="2"/>`,
-    );
-    lines.forEach((l, i) =>
-      parts.push(
-        `<text x="12" y="${y + 18 + i * 18}" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#1a73e8">${esc(l)}</text>`,
-      ),
-    );
-    y += bh + 14;
-  }
-
-  // KPI cards
-  if (kpis.length) {
-    const n = Math.min(kpis.length, 6);
-    const cw = Math.floor((W - 10 * (n + 1)) / n);
-    const ch = 90;
-    for (let i = 0; i < n; i++) {
-      const k = kpis[i];
-      const cx = 10 + i * (cw + 10);
-      const acc = k.accent || PAL[i % PAL.length];
-      parts.push(
-        `<rect x="${cx}" y="${y}" width="${cw}" height="${ch}" fill="#fff" stroke="#dadce0" stroke-width="1" rx="8"/>`,
-      );
-      parts.push(
-        `<rect x="${cx}" y="${y}" width="${cw}" height="3" fill="${acc}" rx="3"/>`,
-      );
-      parts.push(
-        `<text x="${cx + 10}" y="${y + 20}" font-family="Arial,Helvetica,sans-serif" font-size="9" font-weight="700" fill="#9aa0a6">${esc((k.label || "").toUpperCase())}</text>`,
-      );
-      parts.push(
-        `<text x="${cx + 10}" y="${y + 52}" font-family="Arial,Helvetica,sans-serif" font-size="21" font-weight="800" fill="#202124">${esc(k.value || "")}</text>`,
-      );
-      if (k.sub)
-        parts.push(
-          `<text x="${cx + 10}" y="${y + 68}" font-family="Arial,Helvetica,sans-serif" font-size="10" fill="#9aa0a6">${esc(k.sub)}</text>`,
-        );
-      if (k.trend) {
-        const tc =
-          k.trend_up === true
-            ? "#137333"
-            : k.trend_up === false
-              ? "#c5221f"
-              : "#5f6368";
-        const tb =
-          k.trend_up === true
-            ? "#e6f4ea"
-            : k.trend_up === false
-              ? "#fce8e6"
-              : "#f1f3f4";
-        parts.push(
-          `<rect x="${cx + 8}" y="${y + 72}" width="${k.trend.length * 6.5 + 12}" height="14" fill="${tb}" rx="7"/>`,
-        );
-        parts.push(
-          `<text x="${cx + 14}" y="${y + 83}" font-family="Arial,Helvetica,sans-serif" font-size="9" font-weight="700" fill="${tc}">${esc(k.trend)}</text>`,
-        );
-      }
-    }
-    y += ch + 16;
-  }
-
-  // Charts
-  for (const ch of charts) {
-    // Section title
-    parts.push(
-      `<text x="14" y="${y + 14}" font-family="Arial,Helvetica,sans-serif" font-size="10" font-weight="700" fill="#9aa0a6" letter-spacing="0.8">${esc((ch.title || "").toUpperCase())}</text>`,
-    );
-    y += 24;
-
-    if (ch.type === "doughnut" || ch.type === "pie") {
-      const R = 85;
-      const innerR = ch.type === "doughnut" ? 48 : 0;
-      const ox = 130;
-      const oy = y + R + 10;
-      const total = ch.datasets[0].data.reduce((a, b) => a + b, 0) || 1;
-      let ang = -Math.PI / 2;
-      ch.datasets[0].data.forEach((val, i) => {
-        if (!val) return;
-        const sweep = (val / total) * 2 * Math.PI;
-        const ea = ang + sweep;
-        const lg = sweep > Math.PI ? 1 : 0;
-        const color = (ch.datasets[0].colors || [])[i] || PAL[i % PAL.length];
-        const [x1, y1] = [ox + R * Math.cos(ang), oy + R * Math.sin(ang)];
-        const [x2, y2] = [ox + R * Math.cos(ea), oy + R * Math.sin(ea)];
-        if (innerR > 0) {
-          const [x3, y3] = [
-            ox + innerR * Math.cos(ea),
-            oy + innerR * Math.sin(ea),
-          ];
-          const [x4, y4] = [
-            ox + innerR * Math.cos(ang),
-            oy + innerR * Math.sin(ang),
-          ];
-          parts.push(
-            `<path d="M${x1},${y1} A${R},${R} 0 ${lg},1 ${x2},${y2} L${x3},${y3} A${innerR},${innerR} 0 ${lg},0 ${x4},${y4}Z" fill="${color}"/>`,
-          );
-        } else {
-          parts.push(
-            `<path d="M${ox},${oy} L${x1},${y1} A${R},${R} 0 ${lg},1 ${x2},${y2}Z" fill="${color}"/>`,
-          );
-        }
-        if (sweep > 0.35) {
-          const ma = ang + sweep / 2;
-          const [lx, ly] = [
-            ox + R * 0.68 * Math.cos(ma),
-            oy + R * 0.68 * Math.sin(ma),
-          ];
-          parts.push(
-            `<text x="${lx}" y="${ly + 4}" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="11" font-weight="700" fill="#fff">${((val / total) * 100).toFixed(0)}%</text>`,
-          );
-        }
-        ang = ea;
-      });
-      // Legend
-      let ly = oy - R + 10;
-      const lx = ox + R + 24;
-      ch.labels.forEach((label, i) => {
-        const val = ch.datasets[0].data[i] || 0;
-        const color = (ch.datasets[0].colors || [])[i] || PAL[i % PAL.length];
-        const valStr = fmt(val, ch.currency);
-        parts.push(`<circle cx="${lx}" cy="${ly}" r="7" fill="${color}"/>`);
-        parts.push(
-          `<text x="${lx + 14}" y="${ly + 5}" font-family="Arial,Helvetica,sans-serif" font-size="12" font-weight="600" fill="#202124">${esc(label)}</text>`,
-        );
-        parts.push(
-          `<text x="${lx + 14}" y="${ly + 20}" font-family="Arial,Helvetica,sans-serif" font-size="11" fill="#5f6368">${((val / total) * 100).toFixed(1)}%  ·  ${valStr}</text>`,
-        );
-        ly += 38;
-      });
-      y = oy + R + 20;
-    } else {
-      // Bar chart (horizontal for long lists, vertical for short)
-      const isH = ch.type === "horizontalBar" || ch.labels.length > 5;
-      const ds0 = ch.datasets[0];
-      const maxVal = Math.max(...ch.datasets.flatMap((d) => d.data), 1);
-
-      if (isH) {
-        const labelW = 160;
-        const barAreaW = W - labelW - 90 - 24;
-        const bh = 22;
-        const gap = 7;
-        ch.labels.forEach((label, i) => {
-          const val = ds0.data[i] || 0;
-          const bw = Math.max((val / maxVal) * barAreaW, 3);
-          const color = (ds0.colors || [])[i] || PAL[i % PAL.length];
-          const lbl = label.length > 24 ? label.slice(0, 22) + "…" : label;
-          parts.push(
-            `<text x="14" y="${y + bh / 2 + 5}" font-family="Arial,Helvetica,sans-serif" font-size="11" fill="#5f6368">${esc(lbl)}</text>`,
-          );
-          parts.push(
-            `<rect x="${labelW}" y="${y + 3}" width="${bw}" height="${bh - 6}" rx="3" fill="${color}" fill-opacity="0.85"/>`,
-          );
-          parts.push(
-            `<text x="${labelW + bw + 7}" y="${y + bh / 2 + 5}" font-family="Arial,Helvetica,sans-serif" font-size="10" fill="#5f6368">${esc(fmt(val, ch.currency))}</text>`,
-          );
-          y += bh + gap;
-        });
-        y += 10;
-      } else {
-        const chartH = 160;
-        const bw = Math.floor(((W - 60) / ch.labels.length) * 0.6);
-        const bGap = Math.floor(((W - 60) / ch.labels.length) * 0.4);
-        ch.labels.forEach((label, i) => {
-          const val = ds0.data[i] || 0;
-          const bh = Math.max((val / maxVal) * chartH, 3);
-          const x = 30 + i * (bw + bGap);
-          const color = (ds0.colors || [])[i] || PAL[i % PAL.length];
-          parts.push(
-            `<rect x="${x}" y="${y + chartH - bh}" width="${bw}" height="${bh}" rx="3" fill="${color}" fill-opacity="0.85"/>`,
-          );
-          parts.push(
-            `<text x="${x + bw / 2}" y="${y + chartH + 14}" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="9" fill="#5f6368">${esc(label.length > 9 ? label.slice(0, 7) + "…" : label)}</text>`,
-          );
-        });
-        parts.push(
-          `<line x1="28" y1="${y}" x2="28" y2="${y + chartH}" stroke="#dadce0" stroke-width="1"/>`,
-        );
-        parts.push(
-          `<line x1="28" y1="${y + chartH}" x2="${W - 10}" y2="${y + chartH}" stroke="#dadce0" stroke-width="1"/>`,
-        );
-        y += chartH + 24;
-      }
-    }
-    y += 12;
-  }
-
-  y += 12;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${y}" viewBox="0 0 ${W} ${y}"><rect width="${W}" height="${y}" fill="#f4f6f9" rx="12"/>${parts.join("")}</svg>`;
-}
-
 // ── Build MCP server ──────────────────────────────────────────────────────────
 function buildMcpServer() {
   const server = new McpServer({ name: "allpets-vetbuddy", version: "2.0.0" });
@@ -1079,152 +817,115 @@ Always filter cancelled=0 for revenue, and pair execute_sql with render_chart fo
         )
         .describe("1–4 charts to render"),
     },
-    ({ title, summary, kpis = [], charts = [] }) => {
-      const J = JSON.stringify;
-      const PALETTE = [
-        "#3b82f6",
-        "#10b981",
-        "#f59e0b",
-        "#ef4444",
-        "#8b5cf6",
-        "#ec4899",
-        "#14b8a6",
-        "#f97316",
-        "#6366f1",
-        "#84cc16",
-        "#a855f7",
-        "#06b6d4",
-      ];
+    async ({ title, summary, kpis = [], charts = [] }) => {
+      try {
+        const PAL = [
+          "#4285f4",
+          "#34a853",
+          "#fbbc04",
+          "#ea4335",
+          "#9c27b0",
+          "#ff6d00",
+          "#00bcd4",
+          "#607d8b",
+          "#e91e63",
+          "#009688",
+        ];
+        const content = [];
 
-      const kpiHtml = kpis.length
-        ? `<div class="kpis">${kpis
-            .map(
-              (k) => `<div class="kpi" style="--a:${k.accent || "#3b82f6"}">
-            <div class="kl">${k.label}</div>
-            <div class="kv">${k.value}</div>
-            ${k.sub ? `<div class="ks">${k.sub}</div>` : ""}
-            ${k.trend ? `<span class="badge ${k.trend_up === true ? "up" : k.trend_up === false ? "dn" : "neu"}">${k.trend}</span>` : ""}
-          </div>`,
-            )
-            .join("")}</div>`
-        : "";
+        // KPI table rendered inline as text
+        if (kpis.length || summary) {
+          let txt = `**📊 ${title}**\n\n`;
+          if (summary) txt += `> ${summary}\n\n`;
+          if (kpis.length) {
+            txt += `| ${kpis.map((k) => k.label).join(" | ")} |\n`;
+            txt += `|${kpis.map(() => "---").join("|")}|\n`;
+            txt += `| ${kpis.map((k) => `**${k.value}**${k.trend ? " " + k.trend : ""}${k.sub ? "<br>" + k.sub : ""}`).join(" | ")} |\n`;
+          }
+          content.push({ type: "text", text: txt });
+        }
 
-      const summaryHtml = summary ? `<div class="sumbox">${summary}</div>` : "";
+        // Fetch chart PNGs from QuickChart in parallel
+        const pngs = await Promise.all(
+          charts.slice(0, 4).map(async (ch) => {
+            const isH = ch.type === "horizontalBar";
+            const isRound = ch.type === "doughnut" || ch.type === "pie";
+            const ds = ch.datasets.map((d, di) => ({
+              label: d.label || "",
+              data: d.data,
+              backgroundColor:
+                d.colors ||
+                (isRound || isH
+                  ? ch.labels.map((_, i) => PAL[i % PAL.length])
+                  : PAL[di % PAL.length]),
+              borderWidth: isRound ? 0 : 1,
+              borderColor: d.color || PAL[di % PAL.length],
+              borderRadius: isRound ? 0 : 4,
+            }));
+            const fmtK =
+              "function(v){return v>=1e5?'\\u20B9'+(v/1e5).toFixed(1)+'L':v>=1e3?'\\u20B9'+(v/1e3).toFixed(0)+'K':'\\u20B9'+Math.round(v)}";
+            const cfg = {
+              type: isH ? "bar" : ch.type,
+              data: { labels: ch.labels, datasets: ds },
+              options: {
+                ...(isH ? { indexAxis: "y" } : {}),
+                plugins: {
+                  title: {
+                    display: true,
+                    text: ch.title,
+                    font: { size: 13, weight: "bold" },
+                    color: "#202124",
+                  },
+                  legend: {
+                    display: isRound,
+                    position: "right",
+                    labels: { color: "#5f6368" },
+                  },
+                  datalabels: { display: false },
+                },
+                ...(isRound
+                  ? {}
+                  : {
+                      scales: {
+                        [isH ? "x" : "y"]: {
+                          grid: { color: "#eeeeee" },
+                          ticks: {
+                            color: "#5f6368",
+                            callback: ch.currency ? fmtK : undefined,
+                          },
+                        },
+                        [isH ? "y" : "x"]: {
+                          grid: { display: false },
+                          ticks: { color: "#5f6368" },
+                        },
+                      },
+                    }),
+              },
+            };
+            const resp = await axios.post(
+              "https://quickchart.io/chart",
+              {
+                chart: cfg,
+                width: 560,
+                height: isRound ? 260 : 300,
+                backgroundColor: "#ffffff",
+                format: "png",
+              },
+              { responseType: "arraybuffer", timeout: 12000 },
+            );
+            return Buffer.from(resp.data).toString("base64");
+          }),
+        );
 
-      const gridClass =
-        charts.length === 1
-          ? "grid1"
-          : charts.length <= 2
-            ? "grid2"
-            : charts.length === 3
-              ? "grid3"
-              : "grid4";
+        pngs.forEach((b64) => {
+          if (b64)
+            content.push({ type: "image", data: b64, mimeType: "image/png" });
+        });
 
-      const canvasHtml = charts
-        .map((ch) => {
-          const h = ["doughnut", "pie"].includes(ch.type) ? 220 : 260;
-          return `<div class="card"><div class="ctitle">${ch.title}</div><div style="position:relative;height:${h}px"><canvas id="${ch.id}"></canvas></div></div>`;
-        })
-        .join("");
-
-      const chartScripts = charts
-        .map((ch) => {
-          const isDonut = ["doughnut", "pie"].includes(ch.type);
-          const isHBar = ch.type === "horizontalBar";
-          const actualType = isHBar ? "bar" : ch.type;
-          const fmtK = `v=>v>=1e5?'₹'+(v/1e5).toFixed(1)+'L':v>=1e3?'₹'+(v/1e3).toFixed(0)+'K':'₹'+v`;
-          const fmtN = `v=>v>=1e5?(v/1e5).toFixed(1)+'L':v>=1e3?(v/1e3).toFixed(0)+'K':v`;
-          const fmt = ch.currency ? fmtK : fmtN;
-
-          const datasets = ch.datasets
-            .map((ds, di) => {
-              const col = ds.color || PALETTE[di % PALETTE.length];
-              const toRgba = (hex, a) => {
-                const c = hex.replace("#", "");
-                return `rgba(${parseInt(c.slice(0, 2), 16)},${parseInt(c.slice(2, 4), 16)},${parseInt(c.slice(4, 6), 16)},${a})`;
-              };
-              const bgColors = isDonut
-                ? ds.colors
-                  ? J(ds.colors)
-                  : J(ch.labels.map((_, i) => PALETTE[i % PALETTE.length]))
-                : isHBar
-                  ? J(ch.labels.map((_, i) => PALETTE[i % PALETTE.length]))
-                  : `'${toRgba(col, 0.85)}'`;
-
-              return `{label:${J(ds.label || "")},data:${J(ds.data)},backgroundColor:${bgColors},borderColor:${isDonut ? "undefined" : J(col)},borderWidth:${isDonut ? 0 : 1},borderRadius:${isDonut ? 0 : 4},fill:${ch.type === "line" ? "false" : "undefined"},tension:0.35,pointRadius:4}`;
-            })
-            .join(",");
-
-          const dlPlugin = isDonut
-            ? `datalabels:{formatter:(v,ctx)=>{const t=ctx.dataset.data.reduce((a,b)=>a+b,0);return t&&v/t>.05?((v/t)*100).toFixed(0)+'%':''},color:'#fff',font:{weight:'700',size:11},textStrokeColor:'rgba(0,0,0,.4)',textStrokeWidth:2}`
-            : `datalabels:{display:false}`;
-
-          const scales = isDonut
-            ? ""
-            : `,scales:{${isHBar ? "x" : "y"}:{grid:{color:'#f1f3f4'},ticks:{callback:${fmt},color:'#5f6368'}},${isHBar ? "y" : "x"}:{grid:{display:false},ticks:{font:{size:10},color:'#5f6368'}}}`;
-
-          return `new Chart(document.getElementById('${ch.id}'),{type:'${actualType}',data:{labels:${J(ch.labels)},datasets:[${datasets}]},options:{${isHBar ? "indexAxis:'y'," : ""}responsive:true,maintainAspectRatio:false,${isDonut ? "cutout:'60%'," : ""}plugins:{legend:{display:${isDonut ? "false" : "true"},position:'top',labels:{color:'#5f6368',boxWidth:10,padding:10,usePointStyle:true}},tooltip:{callbacks:{label:ctx=>' '+(${ch.currency ? `'₹'+Math.round(ctx.raw).toLocaleString('en-IN')` : `ctx.raw`})}},${dlPlugin}}${scales}}});`;
-        })
-        .join("\n");
-
-      const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${title}</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"><\/script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"><\/script>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f4f6f9;color:#202124;padding:16px}
-.hdr{padding:14px 18px;background:#fff;border:1px solid #dadce0;border-radius:12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 1px 3px rgba(0,0,0,.06)}
-.hdr-title{font-size:16px;font-weight:700;color:#202124}
-.hdr-ts{font-size:11px;color:#9aa0a6;margin-top:2px}
-.sumbox{padding:12px 16px;background:#e8f0fe;border-left:4px solid #4285f4;border-radius:0 8px 8px 0;font-size:13px;color:#1a73e8;line-height:1.6;margin-bottom:12px}
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:12px}
-.kpi{background:#fff;border:1px solid #dadce0;border-radius:10px;padding:14px;position:relative;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04)}
-.kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--a)}
-.kl{font-size:9px;font-weight:700;color:#9aa0a6;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px}
-.kv{font-size:20px;font-weight:800;color:#202124;letter-spacing:-.5px;line-height:1;margin-bottom:3px}
-.ks{font-size:10px;color:#9aa0a6;margin-bottom:4px}
-.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700}
-.badge.up{background:#e6f4ea;color:#137333}
-.badge.dn{background:#fce8e6;color:#c5221f}
-.badge.neu{background:#f1f3f4;color:#5f6368}
-.grid1{display:grid;grid-template-columns:1fr;gap:12px}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-.grid4{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
-.card{background:#fff;border:1px solid #dadce0;border-radius:10px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
-.ctitle{font-size:10px;font-weight:700;color:#9aa0a6;text-transform:uppercase;letter-spacing:.9px;margin-bottom:12px}
-.footer{text-align:center;padding:12px 0 2px;color:#dadce0;font-size:10px}
-</style></head><body>
-<div class="hdr">
-  <div>
-    <div class="hdr-title">📊 ${title}</div>
-    <div class="hdr-ts">AllPets · ${new Date().toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</div>
-  </div>
-</div>
-${summaryHtml}
-${kpiHtml}
-<div class="${gridClass}">${canvasHtml}</div>
-<div class="footer">AllPets RDS Analytics</div>
-<script>
-Chart.register(ChartDataLabels);
-Chart.defaults.color='#5f6368';
-Chart.defaults.borderColor='#dadce0';
-Chart.defaults.font.family='-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
-Chart.defaults.font.size=11;
-${chartScripts}
-<\/script></body></html>`;
-
-      const svg = buildChartSVG(title, summary, kpis, charts);
-      return {
-        content: [
-          {
-            type: "image",
-            data: Buffer.from(svg).toString("base64"),
-            mimeType: "image/svg+xml",
-          },
-        ],
-      };
+        return { content };
+      } catch (e) {
+        return err(e);
+      }
     },
   );
 
