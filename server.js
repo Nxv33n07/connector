@@ -649,15 +649,11 @@ TABLE: allpets_stock
   stock_status ENUM('adequate','low','out','negative')
 
 ═══ WORKFLOW FOR EVERY QUERY ════════════════════════════════════════
-Step 1 — call execute_sql with the right SQL to get the data from RDS.
-Step 2 — call render_chart with the results.
-Step 3 — YOUR RESPONSE MUST START WITH THE EXACT <antArtifact> BLOCK FROM THE TOOL RESULT.
+Step 1 — call execute_sql to get data from RDS.
+Step 2 — call render_chart with the results. It returns raw HTML.
+Step 3 — CREATE an HTML artifact using the HTML returned by render_chart, then write 2-3 insight sentences after it.
 
-⚠️ MANDATORY OUTPUT FORMAT — no exceptions:
-• Your response MUST begin with the complete <antArtifact>...</antArtifact> block returned by render_chart — copy it VERBATIM, no truncation.
-• NEVER write any text, greeting, or summary BEFORE the <antArtifact> block.
-• Only AFTER the closing </antArtifact> tag may you write 2-3 sentences of insight.
-• If you do not output the <antArtifact> block first, the chart will not render and the user sees nothing.
+⚠️ Step 3 is non-negotiable: every business query response = HTML artifact first, then text insight. Never respond with only text.
 
 ═══ RULES ════════════════════════════════════════════════════════════
 1. Always filter cancelled=0 for revenue/invoice queries.
@@ -746,7 +742,7 @@ Always filter cancelled=0 for revenue, and pair execute_sql with render_chart fo
   // ── RENDER CHART — dynamic visual from Claude-supplied spec ──────────────
   server.tool(
     "render_chart",
-    "ALWAYS call this after execute_sql to present results visually. Claude decides chart types based on data. Returns an interactive HTML string. You MUST use a native HTML Artifact to render this visual dashboard for the user immediately. Use for every query.",
+    "ALWAYS call this after execute_sql. Returns raw HTML prefixed with CREATE_HTML_ARTIFACT — take that HTML and create an HTML artifact with it immediately. Never respond with text only after calling this tool.",
     {
       title: z
         .string()
@@ -959,11 +955,7 @@ ${chartScripts}
         content: [
           {
             type: "text",
-            text: `<antArtifact identifier="chart-dashboard" type="text/html" title="${title}">
-${html}
-</antArtifact>
-
-YOUR NEXT RESPONSE MUST START WITH THE ABOVE <antArtifact> BLOCK VERBATIM — paste it character-for-character as the very first thing you write. Do not write any text before it. After the closing </antArtifact> tag you may add 2-3 sentences of insight.`,
+            text: `CREATE_HTML_ARTIFACT\ntitle: ${title}\n\n${html}`,
           },
         ],
       };
@@ -985,11 +977,7 @@ YOUR NEXT RESPONSE MUST START WITH THE ABOVE <antArtifact> BLOCK VERBATIM — pa
           content: [
             {
               type: "text",
-              text: `<antArtifact identifier="full-dashboard" type="text/html" title="AllPets Business Intelligence Dashboard">
-${html}
-</antArtifact>
-
-YOUR NEXT RESPONSE MUST START WITH THE ABOVE <antArtifact> BLOCK VERBATIM — paste it character-for-character as the very first thing you write. Do not write any text before it. After the closing </antArtifact> tag you may add 2-3 sentences of insight.`,
+              text: `CREATE_HTML_ARTIFACT\ntitle: AllPets Business Intelligence Dashboard\n\n${html}`,
             },
           ],
         };
