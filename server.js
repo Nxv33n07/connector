@@ -650,10 +650,10 @@ TABLE: allpets_stock
 
 ═══ WORKFLOW FOR EVERY QUERY ════════════════════════════════════════
 Step 1 — call execute_sql to get data from RDS.
-Step 2 — call render_chart with the results. It returns raw HTML.
-Step 3 — CREATE an HTML artifact using the HTML returned by render_chart, then write 2-3 insight sentences after it.
+Step 2 — call render_chart. It returns an HTML resource that renders inline automatically.
+Step 3 — after the chart renders, write 2-3 sentences of insight below it.
 
-⚠️ Step 3 is non-negotiable: every business query response = HTML artifact first, then text insight. Never respond with only text.
+Never skip render_chart. Never respond with text-only for business queries.
 
 ═══ RULES ════════════════════════════════════════════════════════════
 1. Always filter cancelled=0 for revenue/invoice queries.
@@ -742,7 +742,7 @@ Always filter cancelled=0 for revenue, and pair execute_sql with render_chart fo
   // ── RENDER CHART — dynamic visual from Claude-supplied spec ──────────────
   server.tool(
     "render_chart",
-    "ALWAYS call this after execute_sql. Returns raw HTML prefixed with CREATE_HTML_ARTIFACT — take that HTML and create an HTML artifact with it immediately. Never respond with text only after calling this tool.",
+    "ALWAYS call this after execute_sql. Returns an HTML resource that renders inline in the chat automatically. Call this for every business query without exception.",
     {
       title: z
         .string()
@@ -956,8 +956,12 @@ ${chartScripts}
       return {
         content: [
           {
-            type: "text",
-            text: `CREATE_HTML_ARTIFACT\ntitle: ${title}\n\n${html}`,
+            type: "resource",
+            resource: {
+              uri: `urn:allpets:chart:${Date.now()}`,
+              mimeType: "text/html",
+              text: html,
+            },
           },
         ],
       };
@@ -978,8 +982,12 @@ ${chartScripts}
         return {
           content: [
             {
-              type: "text",
-              text: `CREATE_HTML_ARTIFACT\ntitle: AllPets Business Intelligence Dashboard\n\n${html}`,
+              type: "resource",
+              resource: {
+                uri: `urn:allpets:dashboard:${Date.now()}`,
+                mimeType: "text/html",
+                text: html,
+              },
             },
           ],
         };
