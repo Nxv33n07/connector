@@ -650,10 +650,10 @@ TABLE: allpets_stock
 
 ═══ WORKFLOW FOR EVERY QUERY ════════════════════════════════════════
 Step 1 — call execute_sql with the right SQL to get the data from RDS.
-Step 2 — call render_chart with the results, and then immediately OUTPUT the returned <antArtifact> block verbatim in your final response so Claude Desktop renders it as a visual interactive dashboard on the side.
-Step 3 — write a brief insight (2-3 sentences) after the artifact block.
+Step 2 — call render_chart with the results, and then immediately CREATE a native visual HTML Artifact containing the returned HTML code so Claude Desktop renders the interactive dashboard on the side.
+Step 3 — write a brief insight (2-3 sentences) after creating the visual artifact.
 
-ALWAYS follow these 3 steps for every business question. Never skip outputting the <antArtifact> block!
+ALWAYS follow these 3 steps for every business question. Never skip creating the visual HTML Artifact!
 
 ═══ RULES ════════════════════════════════════════════════════════════
 1. Always filter cancelled=0 for revenue/invoice queries.
@@ -742,7 +742,7 @@ Always filter cancelled=0 for revenue, and pair execute_sql with render_chart fo
   // ── RENDER CHART — dynamic visual from Claude-supplied spec ──────────────
   server.tool(
     "render_chart",
-    "ALWAYS call this after execute_sql to present results visually. Claude decides chart types based on data. Returns an interactive HTML string wrapped in an <antArtifact> tag. You MUST output these <antArtifact> tags verbatim in your response to render the visual PowerBI-style Artifact on the side. Use for every query.",
+    "ALWAYS call this after execute_sql to present results visually. Claude decides chart types based on data. Returns an interactive HTML string. You MUST use a native HTML Artifact to render this visual dashboard for the user immediately. Use for every query.",
     {
       title: z
         .string()
@@ -955,11 +955,12 @@ ${chartScripts}
         content: [
           {
             type: "text",
-            text: `<antArtifact identifier="chart-dashboard" type="text/html" title="${title}">
+            text: `HTML DASHBOARD CODE:
+=======================================
 ${html}
-</antArtifact>
+=======================================
 
-CRITICAL INSTRUCTION: You MUST now output the exact <antArtifact> tags and content provided above verbatim in your response. This special XML tag format is required to invoke Anthropic's native visual dashboard UI. Output the <antArtifact> block directly, do not skip it!`,
+CRITICAL INSTRUCTION: Use your native capability to generate visual interactive HTML/JS Artifacts! You MUST create an HTML Artifact and render the dashboard code provided above visually. Do NOT print it as code; generate the visual Artifact directly so the user sees the PowerBI-style dashboard in the side pane!`,
           },
         ],
       };
@@ -969,7 +970,7 @@ CRITICAL INSTRUCTION: You MUST now output the exact <antArtifact> tags and conte
   // ── DASHBOARD (HTML artifact with Chart.js) ───────────────────────────────
   server.tool(
     "get_dashboard",
-    "VISUAL OVERVIEW ONLY — call this exclusively when the user explicitly asks for 'the dashboard', 'full report', 'show me the dashboard', or 'visual overview'. Do NOT call this for specific business questions. Returns an interactive HTML string wrapped in an <antArtifact> tag. You MUST output these <antArtifact> tags verbatim in your response to render the full PowerBI-style visual dashboard on the side.",
+    "VISUAL OVERVIEW ONLY — call this exclusively when the user explicitly asks for 'the dashboard', 'full report', 'show me the dashboard', or 'visual overview'. Do NOT call this for specific business questions. Returns an interactive HTML string. You MUST use a native HTML Artifact to render this full visual dashboard for the user immediately.",
     {
       from_date: z.string().describe("YYYY-MM-DD start date"),
       to_date: z.string().describe("YYYY-MM-DD end date"),
@@ -981,11 +982,12 @@ CRITICAL INSTRUCTION: You MUST now output the exact <antArtifact> tags and conte
           content: [
             {
               type: "text",
-              text: `<antArtifact identifier="full-dashboard" type="text/html" title="AllPets Business Intelligence Dashboard">
+              text: `HTML DASHBOARD CODE:
+=======================================
 ${html}
-</antArtifact>
+=======================================
 
-CRITICAL INSTRUCTION: You MUST now output the exact <antArtifact> tags and content provided above verbatim in your response. This special XML tag format is required to invoke Anthropic's native visual dashboard UI. Output the <antArtifact> block directly, do not skip it!`,
+CRITICAL INSTRUCTION: Use your native capability to generate visual interactive HTML/JS Artifacts! You MUST create an HTML Artifact and render the dashboard code provided above visually. Do NOT print it as code; generate the visual Artifact directly so the user sees the PowerBI-style dashboard in the side pane!`,
             },
           ],
         };
