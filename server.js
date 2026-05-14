@@ -608,6 +608,268 @@ async function getDashboard(fromIso, toIso) {
   return buildDashboardText(data, opp);
 }
 
+// ── SVG chart generator (no dependencies, renders inline in claude.ai) ────────
+function buildChartSVG(title, summary, kpis, charts) {
+  const W = 780;
+  const PAL = [
+    "#4285f4",
+    "#34a853",
+    "#fbbc04",
+    "#ea4335",
+    "#9c27b0",
+    "#ff6d00",
+    "#00bcd4",
+    "#607d8b",
+    "#e91e63",
+    "#009688",
+  ];
+  const esc = (s) =>
+    String(s || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  const inr = (v) => "₹" + Math.round(v || 0).toLocaleString("en-IN");
+  const fmt = (v, currency) =>
+    currency
+      ? inr(v)
+      : v >= 1e5
+        ? "₹" + (v / 1e5).toFixed(1) + "L"
+        : v >= 1e3
+          ? "₹" + (v / 1e3).toFixed(0) + "K"
+          : String(Math.round(v));
+  const parts = [];
+  let y = 16;
+
+  // word-wrap helper
+  const wrap = (text, maxCh) => {
+    const words = String(text).split(" ");
+    const lines = [];
+    let cur = "";
+    for (const w of words) {
+      if ((cur ? cur + " " + w : w).length > maxCh) {
+        if (cur) lines.push(cur);
+        cur = w;
+      } else cur = cur ? cur + " " + w : w;
+    }
+    if (cur) lines.push(cur);
+    return lines;
+  };
+
+  // Header bar
+  parts.push(
+    `<rect x="0" y="0" width="${W}" height="${y + 34}" fill="#fff" rx="10"/>`,
+  );
+  parts.push(
+    `<rect x="0" y="0" width="${W}" height="4" fill="#4285f4" rx="10"/>`,
+  );
+  parts.push(
+    `<text x="14" y="${y + 22}" font-family="Arial,Helvetica,sans-serif" font-size="17" font-weight="700" fill="#202124">${esc(title)}</text>`,
+  );
+  const tsText = new Date().toLocaleString("en-IN", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+  parts.push(
+    `<text x="${W - 12}" y="${y + 22}" font-family="Arial,Helvetica,sans-serif" font-size="10" fill="#9aa0a6" text-anchor="end">${esc(tsText)}</text>`,
+  );
+  y += 48;
+
+  // Summary
+  if (summary) {
+    const lines = wrap(summary, 95);
+    const bh = lines.length * 18 + 16;
+    parts.push(
+      `<rect x="0" y="${y}" width="${W}" height="${bh}" fill="#e8f0fe" rx="8"/>`,
+    );
+    parts.push(
+      `<rect x="0" y="${y}" width="4" height="${bh}" fill="#4285f4" rx="2"/>`,
+    );
+    lines.forEach((l, i) =>
+      parts.push(
+        `<text x="12" y="${y + 18 + i * 18}" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#1a73e8">${esc(l)}</text>`,
+      ),
+    );
+    y += bh + 14;
+  }
+
+  // KPI cards
+  if (kpis.length) {
+    const n = Math.min(kpis.length, 6);
+    const cw = Math.floor((W - 10 * (n + 1)) / n);
+    const ch = 90;
+    for (let i = 0; i < n; i++) {
+      const k = kpis[i];
+      const cx = 10 + i * (cw + 10);
+      const acc = k.accent || PAL[i % PAL.length];
+      parts.push(
+        `<rect x="${cx}" y="${y}" width="${cw}" height="${ch}" fill="#fff" stroke="#dadce0" stroke-width="1" rx="8"/>`,
+      );
+      parts.push(
+        `<rect x="${cx}" y="${y}" width="${cw}" height="3" fill="${acc}" rx="3"/>`,
+      );
+      parts.push(
+        `<text x="${cx + 10}" y="${y + 20}" font-family="Arial,Helvetica,sans-serif" font-size="9" font-weight="700" fill="#9aa0a6">${esc((k.label || "").toUpperCase())}</text>`,
+      );
+      parts.push(
+        `<text x="${cx + 10}" y="${y + 52}" font-family="Arial,Helvetica,sans-serif" font-size="21" font-weight="800" fill="#202124">${esc(k.value || "")}</text>`,
+      );
+      if (k.sub)
+        parts.push(
+          `<text x="${cx + 10}" y="${y + 68}" font-family="Arial,Helvetica,sans-serif" font-size="10" fill="#9aa0a6">${esc(k.sub)}</text>`,
+        );
+      if (k.trend) {
+        const tc =
+          k.trend_up === true
+            ? "#137333"
+            : k.trend_up === false
+              ? "#c5221f"
+              : "#5f6368";
+        const tb =
+          k.trend_up === true
+            ? "#e6f4ea"
+            : k.trend_up === false
+              ? "#fce8e6"
+              : "#f1f3f4";
+        parts.push(
+          `<rect x="${cx + 8}" y="${y + 72}" width="${k.trend.length * 6.5 + 12}" height="14" fill="${tb}" rx="7"/>`,
+        );
+        parts.push(
+          `<text x="${cx + 14}" y="${y + 83}" font-family="Arial,Helvetica,sans-serif" font-size="9" font-weight="700" fill="${tc}">${esc(k.trend)}</text>`,
+        );
+      }
+    }
+    y += ch + 16;
+  }
+
+  // Charts
+  for (const ch of charts) {
+    // Section title
+    parts.push(
+      `<text x="14" y="${y + 14}" font-family="Arial,Helvetica,sans-serif" font-size="10" font-weight="700" fill="#9aa0a6" letter-spacing="0.8">${esc((ch.title || "").toUpperCase())}</text>`,
+    );
+    y += 24;
+
+    if (ch.type === "doughnut" || ch.type === "pie") {
+      const R = 85;
+      const innerR = ch.type === "doughnut" ? 48 : 0;
+      const ox = 130;
+      const oy = y + R + 10;
+      const total = ch.datasets[0].data.reduce((a, b) => a + b, 0) || 1;
+      let ang = -Math.PI / 2;
+      ch.datasets[0].data.forEach((val, i) => {
+        if (!val) return;
+        const sweep = (val / total) * 2 * Math.PI;
+        const ea = ang + sweep;
+        const lg = sweep > Math.PI ? 1 : 0;
+        const color = (ch.datasets[0].colors || [])[i] || PAL[i % PAL.length];
+        const [x1, y1] = [ox + R * Math.cos(ang), oy + R * Math.sin(ang)];
+        const [x2, y2] = [ox + R * Math.cos(ea), oy + R * Math.sin(ea)];
+        if (innerR > 0) {
+          const [x3, y3] = [
+            ox + innerR * Math.cos(ea),
+            oy + innerR * Math.sin(ea),
+          ];
+          const [x4, y4] = [
+            ox + innerR * Math.cos(ang),
+            oy + innerR * Math.sin(ang),
+          ];
+          parts.push(
+            `<path d="M${x1},${y1} A${R},${R} 0 ${lg},1 ${x2},${y2} L${x3},${y3} A${innerR},${innerR} 0 ${lg},0 ${x4},${y4}Z" fill="${color}"/>`,
+          );
+        } else {
+          parts.push(
+            `<path d="M${ox},${oy} L${x1},${y1} A${R},${R} 0 ${lg},1 ${x2},${y2}Z" fill="${color}"/>`,
+          );
+        }
+        if (sweep > 0.35) {
+          const ma = ang + sweep / 2;
+          const [lx, ly] = [
+            ox + R * 0.68 * Math.cos(ma),
+            oy + R * 0.68 * Math.sin(ma),
+          ];
+          parts.push(
+            `<text x="${lx}" y="${ly + 4}" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="11" font-weight="700" fill="#fff">${((val / total) * 100).toFixed(0)}%</text>`,
+          );
+        }
+        ang = ea;
+      });
+      // Legend
+      let ly = oy - R + 10;
+      const lx = ox + R + 24;
+      ch.labels.forEach((label, i) => {
+        const val = ch.datasets[0].data[i] || 0;
+        const color = (ch.datasets[0].colors || [])[i] || PAL[i % PAL.length];
+        const valStr = fmt(val, ch.currency);
+        parts.push(`<circle cx="${lx}" cy="${ly}" r="7" fill="${color}"/>`);
+        parts.push(
+          `<text x="${lx + 14}" y="${ly + 5}" font-family="Arial,Helvetica,sans-serif" font-size="12" font-weight="600" fill="#202124">${esc(label)}</text>`,
+        );
+        parts.push(
+          `<text x="${lx + 14}" y="${ly + 20}" font-family="Arial,Helvetica,sans-serif" font-size="11" fill="#5f6368">${((val / total) * 100).toFixed(1)}%  ·  ${valStr}</text>`,
+        );
+        ly += 38;
+      });
+      y = oy + R + 20;
+    } else {
+      // Bar chart (horizontal for long lists, vertical for short)
+      const isH = ch.type === "horizontalBar" || ch.labels.length > 5;
+      const ds0 = ch.datasets[0];
+      const maxVal = Math.max(...ch.datasets.flatMap((d) => d.data), 1);
+
+      if (isH) {
+        const labelW = 160;
+        const barAreaW = W - labelW - 90 - 24;
+        const bh = 22;
+        const gap = 7;
+        ch.labels.forEach((label, i) => {
+          const val = ds0.data[i] || 0;
+          const bw = Math.max((val / maxVal) * barAreaW, 3);
+          const color = (ds0.colors || [])[i] || PAL[i % PAL.length];
+          const lbl = label.length > 24 ? label.slice(0, 22) + "…" : label;
+          parts.push(
+            `<text x="14" y="${y + bh / 2 + 5}" font-family="Arial,Helvetica,sans-serif" font-size="11" fill="#5f6368">${esc(lbl)}</text>`,
+          );
+          parts.push(
+            `<rect x="${labelW}" y="${y + 3}" width="${bw}" height="${bh - 6}" rx="3" fill="${color}" fill-opacity="0.85"/>`,
+          );
+          parts.push(
+            `<text x="${labelW + bw + 7}" y="${y + bh / 2 + 5}" font-family="Arial,Helvetica,sans-serif" font-size="10" fill="#5f6368">${esc(fmt(val, ch.currency))}</text>`,
+          );
+          y += bh + gap;
+        });
+        y += 10;
+      } else {
+        const chartH = 160;
+        const bw = Math.floor(((W - 60) / ch.labels.length) * 0.6);
+        const bGap = Math.floor(((W - 60) / ch.labels.length) * 0.4);
+        ch.labels.forEach((label, i) => {
+          const val = ds0.data[i] || 0;
+          const bh = Math.max((val / maxVal) * chartH, 3);
+          const x = 30 + i * (bw + bGap);
+          const color = (ds0.colors || [])[i] || PAL[i % PAL.length];
+          parts.push(
+            `<rect x="${x}" y="${y + chartH - bh}" width="${bw}" height="${bh}" rx="3" fill="${color}" fill-opacity="0.85"/>`,
+          );
+          parts.push(
+            `<text x="${x + bw / 2}" y="${y + chartH + 14}" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="9" fill="#5f6368">${esc(label.length > 9 ? label.slice(0, 7) + "…" : label)}</text>`,
+          );
+        });
+        parts.push(
+          `<line x1="28" y1="${y}" x2="28" y2="${y + chartH}" stroke="#dadce0" stroke-width="1"/>`,
+        );
+        parts.push(
+          `<line x1="28" y1="${y + chartH}" x2="${W - 10}" y2="${y + chartH}" stroke="#dadce0" stroke-width="1"/>`,
+        );
+        y += chartH + 24;
+      }
+    }
+    y += 12;
+  }
+
+  y += 12;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${y}" viewBox="0 0 ${W} ${y}"><rect width="${W}" height="${y}" fill="#f4f6f9" rx="12"/>${parts.join("")}</svg>`;
+}
+
 // ── Build MCP server ──────────────────────────────────────────────────────────
 function buildMcpServer() {
   const server = new McpServer({ name: "allpets-vetbuddy", version: "2.0.0" });
@@ -650,8 +912,8 @@ TABLE: allpets_stock
 
 ═══ WORKFLOW FOR EVERY QUERY ════════════════════════════════════════
 Step 1 — call execute_sql to get data from RDS.
-Step 2 — call render_chart. It returns an HTML resource that renders inline automatically.
-Step 3 — after the chart renders, write 2-3 sentences of insight below it.
+Step 2 — call render_chart. It returns an SVG image that appears inline in the chat automatically — no artifact panel needed.
+Step 3 — write 2-3 sentences of insight after the image.
 
 Never skip render_chart. Never respond with text-only for business queries.
 
@@ -953,15 +1215,13 @@ Chart.defaults.font.size=11;
 ${chartScripts}
 <\/script></body></html>`;
 
+      const svg = buildChartSVG(title, summary, kpis, charts);
       return {
         content: [
           {
-            type: "resource",
-            resource: {
-              uri: `urn:allpets:chart:${Date.now()}`,
-              mimeType: "text/html",
-              text: html,
-            },
+            type: "image",
+            data: Buffer.from(svg).toString("base64"),
+            mimeType: "image/svg+xml",
           },
         ],
       };
