@@ -634,17 +634,6 @@ function buildMcpServer() {
 Your data lives in AWS RDS MySQL. ALL answers to business questions must come from the MCP tools — never guess or use static knowledge.
 
 ════════════════════════════════════════════════════════════════════
-⚡ BOARD MEETING / PPT / PERFORMANCE REVIEW — MANDATORY RULE
-════════════════════════════════════════════════════════════════════
-If the user mentions ANY of: board meeting, performance review, PPT, presentation,
-annual review, quarterly review, "create a deck", "complete review" —
-you MUST call board_meeting_report IMMEDIATELY as your FIRST and ONLY tool call.
-Do NOT call execute_sql or render_chart for these requests.
-board_meeting_report returns a complete 7-slide HTML presentation in ONE call.
-Infer from_date and to_date from context (e.g. "April" → from_date=2026-04-01, to_date=2026-04-30;
-"last 12 months" or no date → from_date=one year ago, to_date=today).
-
-════════════════════════════════════════════════════════════════════
 RDS SCHEMA (verified against deployed DB)
 ════════════════════════════════════════════════════════════════════
 TABLE: allpets_invoices
@@ -674,13 +663,87 @@ TABLE: allpets_stock
   stock_status ENUM('adequate','low','out','negative')
 
 ════════════════════════════════════════════════════════════════════
-WORKFLOW FOR SPECIFIC QUERIES (non-board-meeting)
+⚡ BOARD MEETING / PPT / PERFORMANCE REVIEW — WORKFLOW
+════════════════════════════════════════════════════════════════════
+When the user asks for a board meeting, performance review, PPT, presentation,
+annual review, quarterly review, "create a deck", or "complete review":
+
+STEP 1 — Fire ALL of the following execute_sql calls IN PARALLEL (one single batch):
+
+Q1 — Period KPIs + YoY:
+  SELECT
+    SUM(CASE WHEN DATE(invoice_date) BETWEEN '<from>' AND '<to>' THEN invoice_amount END) AS revenue,
+    COUNT(CASE WHEN DATE(invoice_date) BETWEEN '<from>' AND '<to>' THEN 1 END) AS invoices,
+    COUNT(DISTINCT CASE WHEN DATE(invoice_date) BETWEEN '<from>' AND '<to>' THEN DATE(invoice_date) END) AS active_days,
+    SUM(CASE WHEN DATE(invoice_date) BETWEEN DATE_SUB('<from>',INTERVAL 1 YEAR) AND DATE_SUB('<to>',INTERVAL 1 YEAR) THEN invoice_amount END) AS prev_revenue,
+    COUNT(CASE WHEN DATE(invoice_date) BETWEEN DATE_SUB('<from>',INTERVAL 1 YEAR) AND DATE_SUB('<to>',INTERVAL 1 YEAR) THEN 1 END) AS prev_invoices
+  FROM allpets_invoices WHERE cancelled=0
+
+Q2 — Monthly revenue (24 months, relative to today):
+  SELECT DATE_FORMAT(invoice_date,'%Y-%m') AS month,
+    SUM(invoice_amount) AS revenue, COUNT(*) AS invoices
+  FROM allpets_invoices
+  WHERE DATE(invoice_date) >= DATE_SUB(CURDATE(),INTERVAL 24 MONTH) AND cancelled=0
+  GROUP BY month ORDER BY month
+
+Q3 — Species MoM (last 13 months):
+  SELECT DATE_FORMAT(invoice_date,'%Y-%m') AS month, species_group,
+    SUM(item_total) AS revenue, COUNT(DISTINCT invoice_id) AS visits,
+    COUNT(DISTINCT patient_id) AS patients
+  FROM allpets_invoice_items
+  WHERE DATE(invoice_date) >= DATE_SUB(CURDATE(),INTERVAL 13 MONTH)
+  GROUP BY month, species_group ORDER BY month
+
+Q4 — New vs existing pet parents MoM (last 13 months):
+  SELECT DATE_FORMAT(ii.invoice_date,'%Y-%m') AS month,
+    COUNT(DISTINCT CASE WHEN mn.first_month = DATE_FORMAT(ii.invoice_date,'%Y-%m') THEN ii.patient_id END) AS new_patients,
+    COUNT(DISTINCT CASE WHEN mn.first_month < DATE_FORMAT(ii.invoice_date,'%Y-%m') THEN ii.patient_id END) AS returning_patients,
+    SUM(CASE WHEN mn.first_month = DATE_FORMAT(ii.invoice_date,'%Y-%m') THEN ii.item_total ELSE 0 END) AS new_revenue,
+    SUM(CASE WHEN mn.first_month < DATE_FORMAT(ii.invoice_date,'%Y-%m') THEN ii.item_total ELSE 0 END) AS returning_revenue
+  FROM allpets_invoice_items ii
+  JOIN (SELECT patient_id, DATE_FORMAT(MIN(invoice_date),'%Y-%m') AS first_month
+        FROM allpets_invoice_items WHERE patient_id != '' GROUP BY patient_id) mn
+    ON mn.patient_id = ii.patient_id
+  WHERE DATE(ii.invoice_date) >= DATE_SUB(CURDATE(),INTERVAL 13 MONTH) AND ii.patient_id != ''
+  GROUP BY month ORDER BY month
+
+Q5 — Sub-category revenue breakdown for the period (top 25):
+  SELECT plan_sub_category_name AS sub_category, std_category,
+    SUM(item_total) AS revenue, COUNT(DISTINCT invoice_id) AS invoices
+  FROM allpets_invoice_items
+  WHERE DATE(invoice_date) BETWEEN '<from>' AND '<to>'
+    AND plan_sub_category_name IS NOT NULL AND plan_sub_category_name != ''
+  GROUP BY plan_sub_category_name, std_category ORDER BY revenue DESC LIMIT 25
+
+Q6 — Std-category MoM (last 13 months):
+  SELECT DATE_FORMAT(invoice_date,'%Y-%m') AS month, std_category,
+    SUM(item_total) AS revenue
+  FROM allpets_invoice_items
+  WHERE DATE(invoice_date) >= DATE_SUB(CURDATE(),INTERVAL 13 MONTH)
+  GROUP BY month, std_category ORDER BY month
+
+STEP 2 — Using all results, generate a complete HTML presentation artifact with:
+  • Professional slide deck (dark theme, Chart.js for charts)
+  • Slide 1: Executive Summary — KPIs (revenue, invoices, avg/invoice, YoY growth %)
+  • Slide 2: Business Growth — 24-month revenue bar/line chart (current vs prior year overlay)
+  • Slide 3: Dog vs Cat vs Exotic — MoM revenue line chart + unique pet parent count
+  • Slide 4: New vs Existing Pet Parents — MoM stacked bar
+  • Slide 5: Sub-Category Revenue Breakdown — horizontal bar top 20
+  • Slide 6: Clinical Functions MoM — line chart for key std_categories
+  • Slide 7: Ailment & Treatment Trends — top sub-categories in Lab/Consultation/Hospitalization
+  The artifact must be self-contained HTML with embedded Chart.js from CDN, keyboard navigation (← →), and slide counter.
+
+Infer from_date/to_date from context (e.g. "April" → 2026-04-01 / 2026-04-30; no date → last 12 months).
+Replace <from> and <to> in the SQL templates above with the actual dates.
+
+════════════════════════════════════════════════════════════════════
+WORKFLOW FOR ALL OTHER QUERIES
 ════════════════════════════════════════════════════════════════════
 Step 1 — call execute_sql to get data from RDS.
 Step 2 — call render_chart (returns chart image inline in chat).
 Step 3 — write 2-3 sentences of actionable insight.
 
-Never skip render_chart for specific queries. Never use is_new_client or client_id in SQL.
+Never use is_new_client or client_id in SQL.
 For new vs returning patients: use MIN(invoice_date) per patient_id from allpets_invoice_items.
 
 ════════════════════════════════════════════════════════════════════
@@ -1164,766 +1227,6 @@ Always filter cancelled=0 for revenue, and pair execute_sql with render_chart fo
           appointments_detail: appts.slice(0, 20),
           reminders_detail: reminders.slice(0, 20),
         });
-      } catch (e) {
-        return err(e);
-      }
-    },
-  );
-
-  // ── BOARD MEETING REPORT — single-call full presentation ────────────────────
-  server.tool(
-    "board_meeting_report",
-    `Generates a complete board-meeting HTML presentation for AllPets Clinic in ONE call.
-Use this whenever the user asks for a board meeting report, performance review, PPT, presentation, or annual/quarterly review.
-DO NOT use execute_sql + render_chart for board meeting requests — this tool does everything in one shot.
-Returns a self-contained HTML slide deck with 7 slides covering: revenue YoY, species MoM, new vs existing clients, sub-category breakdown, clinical function performance, and ailment trends.`,
-    {
-      from_date: z
-        .string()
-        .describe(
-          "YYYY-MM-DD — start of the primary review period (e.g. 2026-04-01)",
-        ),
-      to_date: z
-        .string()
-        .describe(
-          "YYYY-MM-DD — end of the primary review period (e.g. 2026-04-30)",
-        ),
-    },
-    async ({ from_date, to_date }) => {
-      try {
-        const [
-          monthlyRevenue,
-          speciesMoM,
-          newVsExistingMoM,
-          subCatBreakdown,
-          stdCatMoM,
-          periodKpi,
-          prevYearKpi,
-        ] = await Promise.all([
-          // 24 months of monthly revenue for YoY
-          db.query(
-            `SELECT DATE_FORMAT(invoice_date,'%Y-%m') AS month,
-                    COALESCE(SUM(invoice_amount),0) AS revenue,
-                    COUNT(*) AS invoices
-             FROM allpets_invoices
-             WHERE DATE(invoice_date) >= DATE_SUB(CURDATE(), INTERVAL 24 MONTH)
-               AND cancelled=0
-             GROUP BY month ORDER BY month`,
-          ),
-          // Species MoM last 13 months
-          db.query(
-            `SELECT DATE_FORMAT(invoice_date,'%Y-%m') AS month,
-                    species_group,
-                    COALESCE(SUM(item_total),0) AS revenue,
-                    COUNT(DISTINCT invoice_id) AS visits,
-                    COUNT(DISTINCT patient_id) AS patients
-             FROM allpets_invoice_items
-             WHERE DATE(invoice_date) >= DATE_SUB(CURDATE(), INTERVAL 13 MONTH)
-             GROUP BY month, species_group ORDER BY month`,
-          ),
-          // New vs existing MoM using patient first-visit logic
-          db.query(
-            `SELECT
-               DATE_FORMAT(ii.invoice_date,'%Y-%m') AS month,
-               COUNT(DISTINCT CASE WHEN mn.first_month = DATE_FORMAT(ii.invoice_date,'%Y-%m') THEN ii.patient_id END) AS new_patients,
-               COUNT(DISTINCT CASE WHEN mn.first_month < DATE_FORMAT(ii.invoice_date,'%Y-%m') THEN ii.patient_id END) AS returning_patients,
-               COALESCE(SUM(CASE WHEN mn.first_month = DATE_FORMAT(ii.invoice_date,'%Y-%m') THEN ii.item_total ELSE 0 END),0) AS new_revenue,
-               COALESCE(SUM(CASE WHEN mn.first_month < DATE_FORMAT(ii.invoice_date,'%Y-%m') THEN ii.item_total ELSE 0 END),0) AS returning_revenue
-             FROM allpets_invoice_items ii
-             JOIN (
-               SELECT patient_id, DATE_FORMAT(MIN(invoice_date),'%Y-%m') AS first_month
-               FROM allpets_invoice_items WHERE patient_id != '' GROUP BY patient_id
-             ) mn ON mn.patient_id = ii.patient_id
-             WHERE DATE(ii.invoice_date) >= DATE_SUB(CURDATE(), INTERVAL 13 MONTH)
-               AND ii.patient_id != ''
-             GROUP BY month ORDER BY month`,
-          ),
-          // Sub-category revenue for the period
-          db.query(
-            `SELECT plan_sub_category_name AS sub_cat,
-                    std_category AS category,
-                    COALESCE(SUM(item_total),0) AS revenue,
-                    COUNT(DISTINCT invoice_id) AS invoices
-             FROM allpets_invoice_items
-             WHERE DATE(invoice_date) BETWEEN ? AND ?
-               AND plan_sub_category_name IS NOT NULL AND plan_sub_category_name != ''
-             GROUP BY plan_sub_category_name, std_category
-             ORDER BY revenue DESC LIMIT 25`,
-            [from_date, to_date],
-          ),
-          // Std category MoM last 13 months
-          db.query(
-            `SELECT DATE_FORMAT(invoice_date,'%Y-%m') AS month,
-                    std_category AS category,
-                    COALESCE(SUM(item_total),0) AS revenue
-             FROM allpets_invoice_items
-             WHERE DATE(invoice_date) >= DATE_SUB(CURDATE(), INTERVAL 13 MONTH)
-             GROUP BY month, category ORDER BY month`,
-          ),
-          // Primary period KPIs
-          db.query(
-            `SELECT COALESCE(SUM(invoice_amount),0) AS revenue,
-                    COUNT(*) AS invoices,
-                    COUNT(DISTINCT DATE(invoice_date)) AS active_days
-             FROM allpets_invoices
-             WHERE DATE(invoice_date) BETWEEN ? AND ? AND cancelled=0`,
-            [from_date, to_date],
-          ),
-          // Same period prior year
-          db.query(
-            `SELECT COALESCE(SUM(invoice_amount),0) AS revenue, COUNT(*) AS invoices
-             FROM allpets_invoices
-             WHERE DATE(invoice_date) BETWEEN
-               DATE_SUB(?, INTERVAL 1 YEAR) AND DATE_SUB(?, INTERVAL 1 YEAR)
-               AND cancelled=0`,
-            [from_date, to_date],
-          ),
-        ]);
-
-        const J = JSON.stringify;
-        const INR = (v) => "₹" + Math.round(v || 0).toLocaleString("en-IN");
-        const pct = (a, b) =>
-          b ? (((a - b) / b) * 100).toFixed(1) + "%" : "—";
-
-        const kpi = periodKpi[0] || {};
-        const prevKpi = prevYearKpi[0] || {};
-        const yoyPct = pct(+kpi.revenue, +prevKpi.revenue);
-        const yoyUp = +kpi.revenue >= +prevKpi.revenue;
-
-        // Process monthly revenue array
-        const sortedMonths = monthlyRevenue.map((r) => r.month);
-        const last12Months = sortedMonths.slice(-12);
-        const prev12Months = sortedMonths.slice(-24, -12);
-
-        const revByMonth = {};
-        for (const r of monthlyRevenue) revByMonth[r.month] = +r.revenue;
-        const invByMonth = {};
-        for (const r of monthlyRevenue) invByMonth[r.month] = +r.invoices;
-
-        const curr12Rev = last12Months.map((m) =>
-          Math.round(revByMonth[m] || 0),
-        );
-        const prev12Rev = prev12Months.map((m) =>
-          Math.round(revByMonth[m] || 0),
-        );
-        const curr12Labels = last12Months.map((m) => {
-          const [y, mo] = m.split("-");
-          return (
-            [
-              "",
-              "Jan",
-              "Feb",
-              "Mar",
-              "Apr",
-              "May",
-              "Jun",
-              "Jul",
-              "Aug",
-              "Sep",
-              "Oct",
-              "Nov",
-              "Dec",
-            ][parseInt(mo)] +
-            " " +
-            y.slice(2)
-          );
-        });
-
-        // Species data
-        const spMonths = [...new Set(speciesMoM.map((r) => r.month))]
-          .sort()
-          .slice(-12);
-        const spLabels = spMonths.map((m) => {
-          const [y, mo] = m.split("-");
-          return (
-            [
-              "",
-              "Jan",
-              "Feb",
-              "Mar",
-              "Apr",
-              "May",
-              "Jun",
-              "Jul",
-              "Aug",
-              "Sep",
-              "Oct",
-              "Nov",
-              "Dec",
-            ][parseInt(mo)] +
-            " " +
-            y.slice(2)
-          );
-        });
-        const getSpRev = (sp) =>
-          spMonths.map((m) => {
-            const r = speciesMoM.find(
-              (x) => x.month === m && x.species_group === sp,
-            );
-            return r ? Math.round(+r.revenue) : 0;
-          });
-        const getSpPat = (sp) =>
-          spMonths.map((m) => {
-            const r = speciesMoM.find(
-              (x) => x.month === m && x.species_group === sp,
-            );
-            return r ? +r.patients : 0;
-          });
-
-        // New vs existing
-        const nveMonths = newVsExistingMoM.map((r) => {
-          const [y, mo] = r.month.split("-");
-          return (
-            [
-              "",
-              "Jan",
-              "Feb",
-              "Mar",
-              "Apr",
-              "May",
-              "Jun",
-              "Jul",
-              "Aug",
-              "Sep",
-              "Oct",
-              "Nov",
-              "Dec",
-            ][parseInt(mo)] +
-            " " +
-            y.slice(2)
-          );
-        });
-        const newPats = newVsExistingMoM.map((r) => +r.new_patients);
-        const retPats = newVsExistingMoM.map((r) => +r.returning_patients);
-        const newRevs = newVsExistingMoM.map((r) => Math.round(+r.new_revenue));
-        const retRevs = newVsExistingMoM.map((r) =>
-          Math.round(+r.returning_revenue),
-        );
-
-        // Sub-category top 20
-        const subCats = subCatBreakdown.slice(0, 20);
-        const subLabels = subCats.map((r) =>
-          (r.sub_cat || "").length > 22
-            ? (r.sub_cat || "").slice(0, 20) + "…"
-            : r.sub_cat || "",
-        );
-        const subRevs = subCats.map((r) => Math.round(+r.revenue));
-        const subCols = [
-          "#4285f4",
-          "#34a853",
-          "#fbbc04",
-          "#ea4335",
-          "#9c27b0",
-          "#ff6d00",
-          "#00bcd4",
-          "#607d8b",
-          "#e91e63",
-          "#009688",
-          "#3f51b5",
-          "#ff5722",
-          "#795548",
-          "#9e9e9e",
-          "#03a9f4",
-          "#8bc34a",
-          "#ffc107",
-          "#673ab7",
-          "#f44336",
-          "#2196f3",
-        ];
-
-        // Std category MoM (Prescription, Lab, Hospitalization, Consultation, Food)
-        const catKeys = [
-          "Prescription",
-          "Laboratory",
-          "Hospitalization",
-          "Consultation",
-          "Food",
-          "Grooming",
-        ];
-        const catColors2 = [
-          "#ea4335",
-          "#4285f4",
-          "#9c27b0",
-          "#34a853",
-          "#fbbc04",
-          "#e91e63",
-        ];
-        const catMonths = [...new Set(stdCatMoM.map((r) => r.month))]
-          .sort()
-          .slice(-12);
-        const catLabels2 = catMonths.map((m) => {
-          const [y, mo] = m.split("-");
-          return (
-            [
-              "",
-              "Jan",
-              "Feb",
-              "Mar",
-              "Apr",
-              "May",
-              "Jun",
-              "Jul",
-              "Aug",
-              "Sep",
-              "Oct",
-              "Nov",
-              "Dec",
-            ][parseInt(mo)] +
-            " " +
-            y.slice(2)
-          );
-        });
-        const catDatasets = catKeys.map((cat, ci) => ({
-          label: cat,
-          data: catMonths.map((m) => {
-            const r = stdCatMoM.find(
-              (x) => x.month === m && x.category === cat,
-            );
-            return r ? Math.round(+r.revenue) : 0;
-          }),
-          color: catColors2[ci],
-        }));
-
-        // Disease / ailment trends — medical sub-cats from the period
-        const medicalCats = subCatBreakdown
-          .filter((r) =>
-            ["Laboratory", "Hospitalization", "Consultation"].includes(
-              r.category,
-            ),
-          )
-          .slice(0, 12);
-        const ailLabels = medicalCats.map((r) =>
-          (r.sub_cat || "").length > 26
-            ? (r.sub_cat || "").slice(0, 24) + "…"
-            : r.sub_cat || "",
-        );
-        const ailRevs = medicalCats.map((r) => Math.round(+r.revenue));
-
-        const html = `<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AllPets Board Report</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"><\/script>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#060b14;color:#e2e8f0;height:100vh;overflow:hidden}
-.deck{width:100%;height:100vh;position:relative}
-.slide{display:none;width:100%;height:100vh;padding:28px 36px;overflow:auto;flex-direction:column}
-.slide.active{display:flex}
-.slide-hdr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid #1e3352}
-.slide-title{font-size:22px;font-weight:900;background:linear-gradient(135deg,#60a5fa,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:-.5px}
-.slide-sub{font-size:11px;color:#475569;margin-top:4px}
-.brand{text-align:right;font-size:11px;color:#334155}
-.brand strong{color:#60a5fa;display:block;font-size:13px}
-.kpis{display:flex;gap:12px;margin-bottom:18px;flex-wrap:wrap}
-.kc{flex:1;min-width:120px;background:linear-gradient(145deg,#111d35,#0d1626);border:1px solid #1e3352;border-radius:12px;padding:14px 16px;position:relative}
-.kc::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--a,#3b82f6);border-radius:12px 12px 0 0}
-.kc-l{font-size:9px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px}
-.kc-v{font-size:20px;font-weight:900;color:#f1f5f9;letter-spacing:-.5px}
-.kc-s{font-size:10px;color:#334155;margin-top:3px}
-.badge{display:inline-flex;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;margin-top:4px}
-.up{background:rgba(16,185,129,.12);color:#10b981;border:1px solid rgba(16,185,129,.2)}
-.dn{background:rgba(239,68,68,.12);color:#ef4444;border:1px solid rgba(239,68,68,.2)}
-.charts-row{display:flex;gap:14px;flex:1;min-height:0}
-.chart-box{flex:1;background:linear-gradient(145deg,#111d35,#0d1626);border:1px solid #1e3352;border-radius:14px;padding:16px;display:flex;flex-direction:column;min-height:0}
-.chart-box.wide{flex:2}
-.chart-box.narrow{flex:1}
-.ch-title{font-size:10px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:.9px;margin-bottom:10px}
-.ch-wrap{position:relative;flex:1;min-height:0}
-.nav{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:12px;background:rgba(6,11,20,.9);border:1px solid #1e3352;border-radius:40px;padding:8px 20px;backdrop-filter:blur(8px);z-index:100}
-.nav-btn{background:linear-gradient(135deg,#1e3a5f,#0f2541);border:1px solid #2d5a8e;color:#93c5fd;font-size:12px;font-weight:700;padding:6px 18px;border-radius:20px;cursor:pointer;transition:all .2s}
-.nav-btn:hover{background:linear-gradient(135deg,#2d5a8e,#1e3a5f);color:#bfdbfe}
-.nav-btn:disabled{opacity:.3;cursor:not-allowed}
-.nav-counter{font-size:12px;color:#475569;font-weight:600;min-width:40px;text-align:center}
-.nav-dots{display:flex;gap:6px}
-.dot{width:6px;height:6px;border-radius:50%;background:#1e3352;cursor:pointer;transition:background .2s}
-.dot.active{background:#3b82f6}
-table.tbl{width:100%;border-collapse:collapse;font-size:11px}
-table.tbl th{background:#0d1626;color:#64748b;text-transform:uppercase;letter-spacing:.6px;padding:6px 8px;text-align:left;font-size:9px;font-weight:700}
-table.tbl td{padding:6px 8px;border-bottom:1px solid #0f1e35;color:#94a3b8}
-table.tbl td:last-child{text-align:right;color:#f1f5f9;font-weight:700}
-table.tbl tr:last-child td{border-bottom:none}
-</style></head>
-<body>
-<div class="deck">
-
-<!-- ══ SLIDE 1: EXECUTIVE SUMMARY ══ -->
-<div class="slide active" id="s1">
-  <div class="slide-hdr">
-    <div>
-      <div class="slide-title">🏥 AllPets Clinic — Board Meeting</div>
-      <div class="slide-sub">Performance Review · ${from_date} to ${to_date}</div>
-    </div>
-    <div class="brand"><strong>AllPets Clinic & Beyond</strong>Hyderabad · Powered by VetBuddy MCP</div>
-  </div>
-  <div class="kpis">
-    <div class="kc" style="--a:#3b82f6">
-      <div class="kc-l">Total Revenue</div>
-      <div class="kc-v">${INR(kpi.revenue)}</div>
-      <div class="kc-s">${kpi.invoices || 0} invoices · ${kpi.active_days || 0} active days</div>
-      <span class="badge ${yoyUp ? "up" : "dn"}">${yoyUp ? "▲" : "▼"} ${yoyPct} vs last year</span>
-    </div>
-    <div class="kc" style="--a:#10b981">
-      <div class="kc-l">Avg / Invoice</div>
-      <div class="kc-v">${INR(kpi.invoices ? +kpi.revenue / +kpi.invoices : 0)}</div>
-      <div class="kc-s">Per visit revenue</div>
-    </div>
-    <div class="kc" style="--a:#f59e0b">
-      <div class="kc-l">Prior Year Revenue</div>
-      <div class="kc-v">${INR(prevKpi.revenue)}</div>
-      <div class="kc-s">${prevKpi.invoices || 0} invoices same period</div>
-    </div>
-    <div class="kc" style="--a:#8b5cf6">
-      <div class="kc-l">Top Sub-Category</div>
-      <div class="kc-v" style="font-size:14px">${subCats[0]?.sub_cat || "—"}</div>
-      <div class="kc-s">${INR(subCats[0]?.revenue)} · ${subCats[0]?.invoices || 0} inv</div>
-    </div>
-    <div class="kc" style="--a:#ec4899">
-      <div class="kc-l">Daily Avg Revenue</div>
-      <div class="kc-v">${INR(kpi.active_days ? +kpi.revenue / +kpi.active_days : 0)}</div>
-      <div class="kc-s">Per operating day</div>
-    </div>
-  </div>
-  <div class="charts-row">
-    <div class="chart-box wide">
-      <div class="ch-title">📈 Revenue Trend — Last 12 Months</div>
-      <div class="ch-wrap"><canvas id="c1a"></canvas></div>
-    </div>
-    <div class="chart-box narrow">
-      <div class="ch-title">🏷️ Top Sub-Categories (Period)</div>
-      <table class="tbl">
-        <tr><th>#</th><th>Sub-Category</th><th>Revenue</th></tr>
-        ${subCats
-          .slice(0, 10)
-          .map(
-            (r, i) =>
-              `<tr><td style="color:#475569">${i + 1}</td><td>${r.sub_cat || "—"}</td><td>${INR(r.revenue)}</td></tr>`,
-          )
-          .join("")}
-      </table>
-    </div>
-  </div>
-</div>
-
-<!-- ══ SLIDE 2: REVENUE YEAR-ON-YEAR ══ -->
-<div class="slide" id="s2">
-  <div class="slide-hdr">
-    <div>
-      <div class="slide-title">📊 Business Growth — Year on Year</div>
-      <div class="slide-sub">24-month revenue trend with prior-year comparison</div>
-    </div>
-    <div class="brand"><strong>AllPets Clinic & Beyond</strong>2 / 7</div>
-  </div>
-  <div class="kpis">
-    <div class="kc" style="--a:#3b82f6">
-      <div class="kc-l">Current 12M Revenue</div>
-      <div class="kc-v">${INR(curr12Rev.reduce((a, b) => a + b, 0))}</div>
-      <span class="badge ${yoyUp ? "up" : "dn"}">${yoyUp ? "▲" : "▼"} ${Math.abs(parseFloat(yoyPct)).toFixed(1)}% YoY</span>
-    </div>
-    <div class="kc" style="--a:#64748b">
-      <div class="kc-l">Prior 12M Revenue</div>
-      <div class="kc-v">${INR(prev12Rev.reduce((a, b) => a + b, 0))}</div>
-      <div class="kc-s">Same period last year</div>
-    </div>
-    <div class="kc" style="--a:#10b981">
-      <div class="kc-l">Best Month</div>
-      <div class="kc-v" style="font-size:14px">${curr12Labels[curr12Rev.indexOf(Math.max(...curr12Rev))] || "—"}</div>
-      <div class="kc-s">${INR(Math.max(...curr12Rev))}</div>
-    </div>
-  </div>
-  <div class="charts-row">
-    <div class="chart-box wide">
-      <div class="ch-title">📈 Monthly Revenue — Current vs Prior Year</div>
-      <div class="ch-wrap"><canvas id="c2a"></canvas></div>
-    </div>
-    <div class="chart-box narrow">
-      <div class="ch-title">📋 Monthly Breakdown</div>
-      <table class="tbl">
-        <tr><th>Month</th><th>Revenue</th><th>Invoices</th></tr>
-        ${last12Months
-          .slice(-8)
-          .map(
-            (m) => `<tr>
-            <td>${curr12Labels[last12Months.indexOf(m)]}</td>
-            <td>${INR(revByMonth[m] || 0)}</td>
-            <td>${invByMonth[m] || 0}</td>
-          </tr>`,
-          )
-          .join("")}
-      </table>
-    </div>
-  </div>
-</div>
-
-<!-- ══ SLIDE 3: SPECIES ANALYSIS ══ -->
-<div class="slide" id="s3">
-  <div class="slide-hdr">
-    <div>
-      <div class="slide-title">🐾 Dog vs Cat vs Exotic — Growth MoM</div>
-      <div class="slide-sub">Revenue and unique pet parent count per species per month</div>
-    </div>
-    <div class="brand"><strong>AllPets Clinic & Beyond</strong>3 / 7</div>
-  </div>
-  <div class="kpis">
-    ${["Canine", "Feline", "Others"]
-      .map((sp, si) => {
-        const spData = speciesMoM.filter((r) => r.species_group === sp);
-        const spRev = spData.reduce((a, r) => a + +r.revenue, 0);
-        const spPat = spData.reduce((a, r) => a + +r.patients, 0);
-        const icons = ["🐕", "🐈", "🦜"];
-        const colors = ["#3b82f6", "#a78bfa", "#10b981"];
-        return `<div class="kc" style="--a:${colors[si]}">
-        <div class="kc-l">${icons[si]} ${sp === "Canine" ? "Dogs" : sp === "Feline" ? "Cats" : "Exotics"}</div>
-        <div class="kc-v">${INR(spRev)}</div>
-        <div class="kc-s">${spPat} unique pet parents</div>
-      </div>`;
-      })
-      .join("")}
-  </div>
-  <div class="charts-row">
-    <div class="chart-box wide">
-      <div class="ch-title">📊 Revenue by Species — Month on Month</div>
-      <div class="ch-wrap"><canvas id="c3a"></canvas></div>
-    </div>
-    <div class="chart-box narrow">
-      <div class="ch-title">👥 Pet Parent Count MoM</div>
-      <div class="ch-wrap"><canvas id="c3b"></canvas></div>
-    </div>
-  </div>
-</div>
-
-<!-- ══ SLIDE 4: NEW VS EXISTING ══ -->
-<div class="slide" id="s4">
-  <div class="slide-hdr">
-    <div>
-      <div class="slide-title">👥 New vs Existing Pet Parents</div>
-      <div class="slide-sub">Acquisition vs retention — patient growth and revenue contribution</div>
-    </div>
-    <div class="brand"><strong>AllPets Clinic & Beyond</strong>4 / 7</div>
-  </div>
-  <div class="kpis">
-    <div class="kc" style="--a:#10b981">
-      <div class="kc-l">Total New (12M)</div>
-      <div class="kc-v">${newPats.reduce((a, b) => a + b, 0)}</div>
-      <div class="kc-s">${INR(newRevs.reduce((a, b) => a + b, 0))} revenue</div>
-    </div>
-    <div class="kc" style="--a:#3b82f6">
-      <div class="kc-l">Total Returning (12M)</div>
-      <div class="kc-v">${retPats.reduce((a, b) => a + b, 0)}</div>
-      <div class="kc-s">${INR(retRevs.reduce((a, b) => a + b, 0))} revenue</div>
-    </div>
-    <div class="kc" style="--a:#f59e0b">
-      <div class="kc-l">Avg New/Month</div>
-      <div class="kc-v">${Math.round(newPats.reduce((a, b) => a + b, 0) / Math.max(newPats.length, 1))}</div>
-      <div class="kc-s">New patient acquisitions</div>
-    </div>
-    <div class="kc" style="--a:#8b5cf6">
-      <div class="kc-l">Retention Revenue %</div>
-      <div class="kc-v">${(() => {
-        const t =
-          retRevs.reduce((a, b) => a + b, 0) +
-          newRevs.reduce((a, b) => a + b, 0);
-        return t
-          ? ((retRevs.reduce((a, b) => a + b, 0) / t) * 100).toFixed(0) + "%"
-          : "—";
-      })()}</div>
-      <div class="kc-s">Existing client contribution</div>
-    </div>
-  </div>
-  <div class="charts-row">
-    <div class="chart-box wide">
-      <div class="ch-title">📊 New vs Returning Patients — Monthly Count</div>
-      <div class="ch-wrap"><canvas id="c4a"></canvas></div>
-    </div>
-    <div class="chart-box narrow">
-      <div class="ch-title">💰 New vs Returning — Revenue Contribution</div>
-      <div class="ch-wrap"><canvas id="c4b"></canvas></div>
-    </div>
-  </div>
-</div>
-
-<!-- ══ SLIDE 5: SUB-CATEGORY BREAKDOWN ══ -->
-<div class="slide" id="s5">
-  <div class="slide-hdr">
-    <div>
-      <div class="slide-title">🏷️ Sub-Category Revenue Breakdown</div>
-      <div class="slide-sub">Foods · Pharmacy · Prescription · Surgery · Lab · Consultation — detailed split</div>
-    </div>
-    <div class="brand"><strong>AllPets Clinic & Beyond</strong>5 / 7</div>
-  </div>
-  <div class="charts-row">
-    <div class="chart-box wide">
-      <div class="ch-title">📊 Top Sub-Categories by Revenue</div>
-      <div class="ch-wrap"><canvas id="c5a"></canvas></div>
-    </div>
-    <div class="chart-box narrow">
-      <div class="ch-title">📋 Full Sub-Category Detail</div>
-      <table class="tbl">
-        <tr><th>Sub-Category</th><th>Category</th><th>Revenue</th></tr>
-        ${subCats
-          .slice(0, 15)
-          .map(
-            (r) => `<tr>
-            <td>${(r.sub_cat || "").length > 18 ? (r.sub_cat || "").slice(0, 16) + "…" : r.sub_cat || "—"}</td>
-            <td style="color:#64748b;font-size:9px">${r.category || ""}</td>
-            <td>${INR(r.revenue)}</td>
-          </tr>`,
-          )
-          .join("")}
-      </table>
-    </div>
-  </div>
-</div>
-
-<!-- ══ SLIDE 6: CLINICAL FUNCTION MOM ══ -->
-<div class="slide" id="s6">
-  <div class="slide-hdr">
-    <div>
-      <div class="slide-title">🔬 Clinical Function Performance — MoM</div>
-      <div class="slide-sub">Prescription · Laboratory · Hospitalization · Consultation · Food — month on month</div>
-    </div>
-    <div class="brand"><strong>AllPets Clinic & Beyond</strong>6 / 7</div>
-  </div>
-  <div class="kpis">
-    ${catKeys
-      .slice(0, 5)
-      .map((cat, ci) => {
-        const catTotal = stdCatMoM
-          .filter((r) => r.category === cat)
-          .reduce((a, r) => a + +r.revenue, 0);
-        return `<div class="kc" style="--a:${catColors2[ci]}">
-        <div class="kc-l">${cat}</div>
-        <div class="kc-v" style="font-size:14px">${INR(catTotal)}</div>
-        <div class="kc-s">Last 12 months total</div>
-      </div>`;
-      })
-      .join("")}
-  </div>
-  <div class="charts-row">
-    <div class="chart-box" style="flex:1">
-      <div class="ch-title">📈 Category Revenue — Month on Month</div>
-      <div class="ch-wrap"><canvas id="c6a"></canvas></div>
-    </div>
-  </div>
-</div>
-
-<!-- ══ SLIDE 7: DISEASE & AILMENT TRENDS ══ -->
-<div class="slide" id="s7">
-  <div class="slide-hdr">
-    <div>
-      <div class="slide-title">🏥 Common Ailment & Disease Trends</div>
-      <div class="slide-sub">Clinical treatment breakdown from invoice data — Lab · Hospitalization · Consultation categories</div>
-    </div>
-    <div class="brand"><strong>AllPets Clinic & Beyond</strong>7 / 7</div>
-  </div>
-  <div class="charts-row">
-    <div class="chart-box narrow">
-      <div class="ch-title">🔬 Clinical Treatment Distribution</div>
-      <div class="ch-wrap"><canvas id="c7a"></canvas></div>
-    </div>
-    <div class="chart-box wide">
-      <div class="ch-title">📋 Treatment & Ailment Hierarchy</div>
-      <table class="tbl">
-        <tr><th>#</th><th>Treatment / Ailment</th><th>Category</th><th>Invoices</th><th>Revenue</th></tr>
-        ${subCatBreakdown
-          .filter((r) =>
-            ["Laboratory", "Hospitalization", "Consultation"].includes(
-              r.category,
-            ),
-          )
-          .slice(0, 15)
-          .map(
-            (r, i) => `<tr>
-            <td style="color:#475569">${i + 1}</td>
-            <td>${r.sub_cat || "—"}</td>
-            <td style="color:#64748b;font-size:9px">${r.category}</td>
-            <td style="text-align:center">${r.invoices || 0}</td>
-            <td>${INR(r.revenue)}</td>
-          </tr>`,
-          )
-          .join("")}
-      </table>
-    </div>
-  </div>
-</div>
-
-</div><!-- end deck -->
-
-<!-- Navigation -->
-<div class="nav">
-  <button class="nav-btn" id="prevBtn" onclick="navigate(-1)" disabled>◀ Prev</button>
-  <div class="nav-dots" id="dots"></div>
-  <span class="nav-counter" id="counter">1 / 7</span>
-  <button class="nav-btn" id="nextBtn" onclick="navigate(1)">Next ▶</button>
-</div>
-
-<script>
-Chart.defaults.color='#64748b';
-Chart.defaults.borderColor='#0f1e35';
-Chart.defaults.font.family='-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
-Chart.defaults.font.size=10;
-
-const slides=document.querySelectorAll('.slide');
-const totalSlides=slides.length;
-let current=0;
-const dotsEl=document.getElementById('dots');
-for(let i=0;i<totalSlides;i++){const d=document.createElement('div');d.className='dot'+(i===0?' active':'');d.onclick=()=>goTo(i);dotsEl.appendChild(d);}
-function navigate(dir){goTo(current+dir)}
-function goTo(n){
-  slides[current].classList.remove('active');
-  dotsEl.children[current].classList.remove('active');
-  current=Math.max(0,Math.min(n,totalSlides-1));
-  slides[current].classList.add('active');
-  dotsEl.children[current].classList.add('active');
-  document.getElementById('counter').textContent=(current+1)+' / '+totalSlides;
-  document.getElementById('prevBtn').disabled=current===0;
-  document.getElementById('nextBtn').disabled=current===totalSlides-1;
-}
-document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowDown')navigate(1);if(e.key==='ArrowLeft'||e.key==='ArrowUp')navigate(-1);});
-
-const fmtK=v=>v>=1e5?'₹'+(v/1e5).toFixed(1)+'L':v>=1e3?'₹'+(v/1e3).toFixed(0)+'K':'₹'+Math.round(v);
-const inr=v=>'₹'+Math.round(v||0).toLocaleString('en-IN');
-
-// Slide 1: Revenue trend line
-new Chart(document.getElementById('c1a'),{type:'line',data:{labels:${J(curr12Labels)},datasets:[{label:'Revenue',data:${J(curr12Rev)},borderColor:'#3b82f6',backgroundColor:'rgba(59,130,246,.1)',fill:true,tension:.3,pointRadius:3,borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},datalabels:{display:false}},scales:{y:{grid:{color:'#0f1e35'},ticks:{callback:fmtK}},x:{grid:{display:false}}}}});
-
-// Slide 2: YoY grouped bar
-new Chart(document.getElementById('c2a'),{type:'bar',data:{labels:${J(curr12Labels)},datasets:[{label:'Prior Year',data:${J(prev12Rev)},backgroundColor:'rgba(71,85,105,.4)',borderColor:'#475569',borderWidth:1,borderRadius:3},{label:'Current Year',data:${J(curr12Rev)},backgroundColor:'rgba(59,130,246,.65)',borderColor:'#3b82f6',borderWidth:1,borderRadius:3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{color:'#94a3b8',boxWidth:10,padding:10}},datalabels:{display:false}},scales:{y:{grid:{color:'#0f1e35'},ticks:{callback:fmtK}},x:{grid:{display:false},ticks:{font:{size:9}}}}}});
-
-// Slide 3a: Species revenue bar
-new Chart(document.getElementById('c3a'),{type:'bar',data:{labels:${J(spLabels)},datasets:[{label:'🐕 Dog',data:${J(getSpRev("Canine"))},backgroundColor:'rgba(59,130,246,.65)',borderColor:'#3b82f6',borderWidth:1,borderRadius:3},{label:'🐈 Cat',data:${J(getSpRev("Feline"))},backgroundColor:'rgba(167,139,250,.65)',borderColor:'#a78bfa',borderWidth:1,borderRadius:3},{label:'🦜 Exotic',data:${J(getSpRev("Others"))},backgroundColor:'rgba(16,185,129,.65)',borderColor:'#10b981',borderWidth:1,borderRadius:3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{color:'#94a3b8',boxWidth:10,padding:8}},datalabels:{display:false}},scales:{y:{grid:{color:'#0f1e35'},ticks:{callback:fmtK},stacked:false},x:{grid:{display:false},ticks:{font:{size:9}}}}}});
-
-// Slide 3b: Pet parent count line
-new Chart(document.getElementById('c3b'),{type:'line',data:{labels:${J(spLabels)},datasets:[{label:'Dog',data:${J(getSpPat("Canine"))},borderColor:'#3b82f6',tension:.3,pointRadius:3,borderWidth:2},{label:'Cat',data:${J(getSpPat("Feline"))},borderColor:'#a78bfa',tension:.3,pointRadius:3,borderWidth:2},{label:'Exotic',data:${J(getSpPat("Others"))},borderColor:'#10b981',tension:.3,pointRadius:3,borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{color:'#94a3b8',boxWidth:10,padding:6}},datalabels:{display:false}},scales:{y:{grid:{color:'#0f1e35'}},x:{grid:{display:false},ticks:{font:{size:9}}}}}});
-
-// Slide 4a: New vs returning stacked bar
-new Chart(document.getElementById('c4a'),{type:'bar',data:{labels:${J(nveMonths)},datasets:[{label:'New Patients',data:${J(newPats)},backgroundColor:'rgba(16,185,129,.7)',borderColor:'#10b981',borderWidth:1,borderRadius:3},{label:'Returning Patients',data:${J(retPats)},backgroundColor:'rgba(59,130,246,.65)',borderColor:'#3b82f6',borderWidth:1,borderRadius:3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{color:'#94a3b8',boxWidth:10,padding:8}},datalabels:{display:false}},scales:{x:{stacked:true,grid:{display:false},ticks:{font:{size:9}}},y:{stacked:true,grid:{color:'#0f1e35'}}}}});
-
-// Slide 4b: Revenue contribution stacked bar
-new Chart(document.getElementById('c4b'),{type:'bar',data:{labels:${J(nveMonths)},datasets:[{label:'New Revenue',data:${J(newRevs)},backgroundColor:'rgba(16,185,129,.7)',borderColor:'#10b981',borderWidth:1,borderRadius:3},{label:'Returning Revenue',data:${J(retRevs)},backgroundColor:'rgba(59,130,246,.65)',borderColor:'#3b82f6',borderWidth:1,borderRadius:3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{color:'#94a3b8',boxWidth:10,padding:6}},datalabels:{display:false}},scales:{x:{stacked:true,grid:{display:false},ticks:{font:{size:8}}},y:{stacked:true,grid:{color:'#0f1e35'},ticks:{callback:fmtK}}}}});
-
-// Slide 5: Sub-category horizontal bar
-new Chart(document.getElementById('c5a'),{type:'bar',data:{labels:${J(subLabels)},datasets:[{data:${J(subRevs)},backgroundColor:${J(subCols.slice(0, subCats.length))},borderWidth:0,borderRadius:4}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},datalabels:{display:false},tooltip:{callbacks:{label:ctx=>' '+inr(ctx.raw)}}},scales:{x:{grid:{color:'#0f1e35'},ticks:{callback:fmtK}},y:{grid:{display:false},ticks:{font:{size:9}}}}}});
-
-// Slide 6: Category MoM multi-line
-new Chart(document.getElementById('c6a'),{type:'line',data:{labels:${J(catLabels2)},datasets:${J(catDatasets.map((d) => ({ label: d.label, data: d.data, borderColor: d.color, backgroundColor: "transparent", tension: 0.3, pointRadius: 3, borderWidth: 2 })))}},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{color:'#94a3b8',boxWidth:10,padding:8}},datalabels:{display:false}},scales:{y:{grid:{color:'#0f1e35'},ticks:{callback:fmtK}},x:{grid:{display:false},ticks:{font:{size:9}}}}}});
-
-// Slide 7: Ailment doughnut
-new Chart(document.getElementById('c7a'),{type:'doughnut',data:{labels:${J(ailLabels)},datasets:[{data:${J(ailRevs)},backgroundColor:${J(subCols.slice(0, ailLabels.length))},borderWidth:0,hoverOffset:6}]},options:{responsive:true,maintainAspectRatio:false,cutout:'50%',plugins:{legend:{position:'bottom',labels:{color:'#94a3b8',boxWidth:9,padding:8,font:{size:9}}},datalabels:{display:false}}}});
-<\/script></body></html>`;
-
-        return {
-          content: [
-            {
-              type: "resource",
-              resource: {
-                uri: `urn:allpets:board-report:${Date.now()}`,
-                mimeType: "text/html",
-                text: html,
-              },
-            },
-          ],
-        };
       } catch (e) {
         return err(e);
       }
