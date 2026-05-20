@@ -180,30 +180,144 @@ SQL RULES
 4. New vs returning patients: use MIN(invoice_date) per patient_id from allpets_invoice_items.
    There is NO is_new_client or client_id column on invoices — never use them.
 5. Stock value = SUM(onhand_qty * purchase_cost) WHERE onhand_qty > 0.
-6. Use the exact std_category and plan_sub_category_name values shown above in LIVE DATA CONTEXT.
+6. Use the exact std_category and plan_sub_category_name values shown in LIVE DATA CONTEXT above.
+7. NEVER show "Pharmacy vs Service" split — always use sub-category breakdown.
 
 ════════════════════════════════════════════════════════════════════
-HOW TO RESPOND
+⚡ TOKEN EXHAUSTION PREVENTION — CRITICAL RULE
 ════════════════════════════════════════════════════════════════════
-• Run SQL with execute_sql to get data. For complex requests fire multiple queries in parallel.
-• Use your own skills to build charts, dashboards, tables, or slide decks from the data returned.
-• For board meeting / PPT / presentation: run all queries in one parallel batch, then generate
-  a complete self-contained HTML slide deck artifact (dark theme, Chart.js from CDN, keyboard nav).
-• Always show key numbers as formatted KPI cards alongside any chart.
-• Currency = Indian Rupees (₹). Format large numbers Indian-style (e.g. ₹17,38,167).
+For ANY dashboard, report, or multi-section analysis:
+  • Send ALL execute_sql calls in ONE single parallel batch (multiple tool calls in one response).
+  • NEVER run queries one at a time sequentially — that exhausts tokens.
+  • Wait for ALL results, then generate the complete artifact in ONE response.
+  • The full dashboard must be a single self-contained HTML artifact.
 
 ════════════════════════════════════════════════════════════════════
-REVENUE COMPOSITION — MANDATORY RULE
+DASHBOARD SPEC — run these 10 queries in ONE parallel batch
 ════════════════════════════════════════════════════════════════════
-NEVER show "Pharmacy vs Service" split. ALWAYS show sub-category breakdown instead.
-When showing revenue composition in any dashboard or chart, use:
-  SELECT plan_sub_category_name, SUM(item_total) AS revenue
+Replace <FROM> and <TO> with the requested period dates (e.g. 2026-04-01 / 2026-04-30).
+Replace <PREV_FROM> and <PREV_TO> with the prior period (same duration, one month/year back).
+
+Q1 — Summary KPIs (current + prior period for delta):
+  SELECT
+    SUM(CASE WHEN DATE(invoice_date) BETWEEN '<FROM>' AND '<TO>' AND cancelled=0 THEN invoice_amount END) AS revenue,
+    COUNT(CASE WHEN DATE(invoice_date) BETWEEN '<FROM>' AND '<TO>' AND cancelled=0 THEN 1 END) AS invoices,
+    COUNT(CASE WHEN DATE(invoice_date) BETWEEN '<FROM>' AND '<TO>' AND cancelled=1 THEN 1 END) AS cancelled,
+    COUNT(DISTINCT CASE WHEN DATE(invoice_date) BETWEEN '<FROM>' AND '<TO>' AND cancelled=0 THEN DATE(invoice_date) END) AS active_days,
+    SUM(CASE WHEN DATE(invoice_date) BETWEEN '<PREV_FROM>' AND '<PREV_TO>' AND cancelled=0 THEN invoice_amount END) AS prev_revenue,
+    COUNT(CASE WHEN DATE(invoice_date) BETWEEN '<PREV_FROM>' AND '<PREV_TO>' AND cancelled=0 THEN 1 END) AS prev_invoices
+  FROM allpets_invoices
+
+Q2 — Day vs Night invoice split:
+  SELECT shift, COUNT(*) AS invoices, SUM(invoice_amount) AS revenue
+  FROM allpets_invoices
+  WHERE DATE(invoice_date) BETWEEN '<FROM>' AND '<TO>' AND cancelled=0
+  GROUP BY shift
+
+Q3 — Species breakdown (Canine / Feline / Others) vs avg:
+  SELECT species_group,
+    COUNT(DISTINCT invoice_id) AS visits,
+    COUNT(DISTINCT patient_id) AS unique_patients,
+    SUM(item_total) AS revenue,
+    ROUND(SUM(item_total)/COUNT(DISTINCT invoice_id),2) AS avg_per_visit
   FROM allpets_invoice_items
-  WHERE DATE(invoice_date) BETWEEN ? AND ?
+  WHERE DATE(invoice_date) BETWEEN '<FROM>' AND '<TO>'
+  GROUP BY species_group
+
+Q4 — Category split (std_category — Prescription/Laboratory/Hospitalization/Consultation/Food/Grooming/Others):
+  SELECT std_category,
+    SUM(item_total) AS revenue,
+    COUNT(DISTINCT invoice_id) AS invoices,
+    ROUND(SUM(item_total)*100/(SELECT SUM(item_total) FROM allpets_invoice_items WHERE DATE(invoice_date) BETWEEN '<FROM>' AND '<TO>'),1) AS pct
+  FROM allpets_invoice_items
+  WHERE DATE(invoice_date) BETWEEN '<FROM>' AND '<TO>'
+  GROUP BY std_category ORDER BY revenue DESC
+
+Q5 — Sub-category sales (top 20, ranked by revenue):
+  SELECT plan_sub_category_name AS sub_category, std_category,
+    SUM(item_total) AS revenue,
+    COUNT(DISTINCT invoice_id) AS invoices
+  FROM allpets_invoice_items
+  WHERE DATE(invoice_date) BETWEEN '<FROM>' AND '<TO>'
     AND plan_sub_category_name IS NOT NULL AND plan_sub_category_name != ''
-  GROUP BY plan_sub_category_name ORDER BY revenue DESC LIMIT 15
-Display as a horizontal bar chart with the top sub-categories ranked by revenue.
-Group smaller sub-categories into "Others" if there are more than 12.`,
+  GROUP BY plan_sub_category_name, std_category
+  ORDER BY revenue DESC LIMIT 20
+
+Q6 — New vs returning pet parents:
+  SELECT
+    COUNT(DISTINCT CASE WHEN mn.first_visit BETWEEN '<FROM>' AND '<TO>' THEN ii.patient_id END) AS new_patients,
+    COUNT(DISTINCT CASE WHEN mn.first_visit < '<FROM>' THEN ii.patient_id END) AS returning_patients,
+    SUM(CASE WHEN mn.first_visit BETWEEN '<FROM>' AND '<TO>' THEN ii.item_total ELSE 0 END) AS new_revenue,
+    SUM(CASE WHEN mn.first_visit < '<FROM>' THEN ii.item_total ELSE 0 END) AS returning_revenue
+  FROM allpets_invoice_items ii
+  JOIN (SELECT patient_id, MIN(DATE(invoice_date)) AS first_visit
+        FROM allpets_invoice_items WHERE patient_id != '' GROUP BY patient_id) mn
+    ON mn.patient_id = ii.patient_id
+  WHERE DATE(ii.invoice_date) BETWEEN '<FROM>' AND '<TO>' AND ii.patient_id != ''
+
+Q7 — Weekly trend (opportunity — last 8 weeks):
+  SELECT DATE_FORMAT(DATE_SUB(invoice_date, INTERVAL WEEKDAY(invoice_date) DAY),'%Y-%m-%d') AS week_start,
+    SUM(invoice_amount) AS revenue, COUNT(*) AS invoices
+  FROM allpets_invoices
+  WHERE DATE(invoice_date) >= DATE_SUB('<TO>', INTERVAL 8 WEEK) AND cancelled=0
+  GROUP BY week_start ORDER BY week_start
+
+Q8 — Monthly trend (last 13 months):
+  SELECT DATE_FORMAT(invoice_date,'%Y-%m') AS month,
+    SUM(invoice_amount) AS revenue, COUNT(*) AS invoices
+  FROM allpets_invoices
+  WHERE DATE(invoice_date) >= DATE_SUB('<TO>', INTERVAL 13 MONTH) AND cancelled=0
+  GROUP BY month ORDER BY month
+
+Q9 — Inventory snapshot (closing stock + low/out alerts):
+  SELECT
+    COUNT(*) AS total_skus,
+    SUM(CASE WHEN stock_status='adequate' THEN 1 ELSE 0 END) AS adequate,
+    SUM(CASE WHEN stock_status='low' THEN 1 ELSE 0 END) AS low_stock,
+    SUM(CASE WHEN stock_status='out' THEN 1 ELSE 0 END) AS out_of_stock,
+    SUM(CASE WHEN stock_status='negative' THEN 1 ELSE 0 END) AS negative_stock,
+    ROUND(SUM(CASE WHEN onhand_qty>0 THEN onhand_qty*purchase_cost ELSE 0 END)) AS closing_value,
+    COUNT(DISTINCT CASE WHEN std_category='Food' THEN stock_id END) AS food_skus,
+    ROUND(SUM(CASE WHEN std_category='Food' AND onhand_qty>0 THEN onhand_qty*purchase_cost ELSE 0 END)) AS food_value
+  FROM allpets_stock
+
+Q10 — Stock mismatch (negative = system says below zero — physical vs system discrepancy):
+  SELECT stock_name, clinic_name, std_category, plan_sub_category_name,
+    onhand_qty, threshold_qty, purchase_cost,
+    ROUND(onhand_qty*purchase_cost) AS stock_value,
+    stock_status
+  FROM allpets_stock
+  WHERE stock_status IN ('negative','out')
+  ORDER BY stock_status, onhand_qty ASC LIMIT 30
+
+════════════════════════════════════════════════════════════════════
+DASHBOARD LAYOUT (build as single HTML artifact after all 10 queries return)
+════════════════════════════════════════════════════════════════════
+Dark theme (#0f172a background). Use Chart.js from CDN. Sections:
+
+1. SUMMARY ROW — KPI cards: Total Revenue | Total Invoices | Avg/Invoice | Active Days | Cancellations
+   Each card shows current value + delta % vs prior period (green up / red down arrow).
+
+2. DAY vs NIGHT — donut or stacked bar showing invoice count and revenue by shift.
+
+3. SPECIES — 3 cards (Canine / Feline / Others): revenue, unique patients, avg/visit vs overall avg.
+   Add a bar chart comparing avg/visit across species.
+
+4. CATEGORY SPLIT — horizontal bar chart: Prescription | Laboratory | Hospitalization |
+   Consultation | Food | Grooming | Others — sorted by revenue, showing % of total.
+
+5. SUB-CATEGORY SALES — horizontal bar chart top 20, colored by std_category.
+
+6. NEW vs RETURNING PET PARENTS — stacked bar: new patients vs returning patients + revenue split.
+
+7. OPPORTUNITY — two charts side by side:
+   • Weekly trend (last 8 weeks) — bar chart with revenue + invoice count line overlay
+   • Monthly trend (last 13 months) — line chart
+
+8. INVENTORY — summary cards: Closing Value | Food Value | Low Stock | Out of Stock | Mismatches.
+   Table of negative/out stock items (stock name, qty, value, clinic) — these are system vs physical mismatches.
+
+Currency = ₹ Indian format. All numbers with Indian comma formatting.`,
             },
           },
         ],
