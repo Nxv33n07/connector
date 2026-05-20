@@ -36,18 +36,106 @@ const err = (e) => ({
 function buildMcpServer() {
   const server = new McpServer({ name: "allpets-vetbuddy", version: "3.0.0" });
 
-  // ── Analyst instructions ───────────────────────────────────────────────────
+  // ── Analyst instructions (dynamic — queries DB on every fetch) ───────────────
   server.prompt(
     "analyst_instructions",
     "AllPets analyst role — read this before every conversation",
-    () => ({
-      messages: [
-        {
-          role: "user",
-          content: {
-            type: "text",
-            text: `You are the dedicated business analyst for AllPets Veterinary Clinic.
+    async () => {
+      // Fetch live context from RDS so Claude knows exactly what data exists
+      const [dateRange, stdCats, subCats, payTypes, clinics, lastSync, counts] =
+        await Promise.all([
+          db.query(
+            `SELECT DATE_FORMAT(MIN(DATE(invoice_date)),'%Y-%m-%d') AS earliest,
+                    DATE_FORMAT(MAX(DATE(invoice_date)),'%Y-%m-%d') AS latest
+             FROM allpets_invoices`,
+          ),
+          db.query(
+            `SELECT std_category, COUNT(DISTINCT plan_sub_category_name) AS sub_count
+             FROM allpets_invoice_items
+             WHERE std_category IS NOT NULL AND std_category != ''
+             GROUP BY std_category ORDER BY std_category`,
+          ),
+          db.query(
+            `SELECT plan_sub_category_name AS name, std_category AS cat,
+                    ROUND(SUM(item_total)) AS total_revenue
+             FROM allpets_invoice_items
+             WHERE plan_sub_category_name IS NOT NULL AND plan_sub_category_name != ''
+             GROUP BY plan_sub_category_name, std_category
+             ORDER BY total_revenue DESC LIMIT 40`,
+          ),
+          db.query(
+            `SELECT DISTINCT payment_type_name
+             FROM allpets_payments
+             WHERE payment_type_name IS NOT NULL ORDER BY payment_type_name`,
+          ),
+          db.query(
+            `SELECT DISTINCT clinic_name FROM allpets_invoices
+             WHERE clinic_name IS NOT NULL ORDER BY clinic_name`,
+          ),
+          db.query(
+            `SELECT sync_type, DATE_FORMAT(completed_at,'%Y-%m-%d %H:%i') AS completed_at,
+                    records_upserted, status
+             FROM allpets_sync_log ORDER BY completed_at DESC LIMIT 1`,
+          ),
+          db.query(
+            `SELECT
+               (SELECT COUNT(*) FROM allpets_invoices WHERE cancelled=0)         AS active_invoices,
+               (SELECT COUNT(*) FROM allpets_invoice_items)                       AS line_items,
+               (SELECT COUNT(*) FROM allpets_payments WHERE returned=0)           AS valid_payments,
+               (SELECT COUNT(*) FROM allpets_stock WHERE onhand_qty > 0)          AS stock_skus`,
+          ),
+        ]).catch(() => [[], [], [], [], [], [], []]);
+
+      const dr = dateRange[0] || {};
+      const cnt = counts[0] || {};
+      const ls = lastSync[0] || {};
+
+      const stdCatList = stdCats
+        .map((r) => `  • ${r.std_category} (${r.sub_count} sub-categories)`)
+        .join("\n");
+
+      const subCatList = subCats
+        .map(
+          (r) =>
+            `  • [${r.cat}] ${r.name}  →  ₹${Number(r.total_revenue).toLocaleString("en-IN")}`,
+        )
+        .join("\n");
+
+      const payTypeList = payTypes
+        .map((r) => `  • ${r.payment_type_name}`)
+        .join("\n");
+      const clinicList = clinics.map((r) => `  • ${r.clinic_name}`).join("\n");
+
+      return {
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: `You are the dedicated business analyst for AllPets Veterinary Clinic.
 All data lives in AWS RDS MySQL. Use execute_sql to answer every business question — never guess.
+
+════════════════════════════════════════════════════════════════════
+LIVE DATA CONTEXT  (fetched right now from RDS)
+════════════════════════════════════════════════════════════════════
+Data range available : ${dr.earliest || "?"} → ${dr.latest || "?"}
+Active invoices      : ${Number(cnt.active_invoices || 0).toLocaleString()}
+Line items           : ${Number(cnt.line_items || 0).toLocaleString()}
+Valid payments       : ${Number(cnt.valid_payments || 0).toLocaleString()}
+Stock SKUs (in stock): ${Number(cnt.stock_skus || 0).toLocaleString()}
+Last sync            : ${ls.completed_at || "unknown"} — ${ls.records_upserted || 0} records (${ls.status || "?"})
+
+Clinics in DB:
+${clinicList || "  (none found)"}
+
+std_category values in DB:
+${stdCatList || "  (none found)"}
+
+Top sub-categories by all-time revenue:
+${subCatList || "  (none found)"}
+
+Payment types in DB:
+${payTypeList || "  (none found)"}
 
 ════════════════════════════════════════════════════════════════════
 DATABASE SCHEMA
@@ -65,7 +153,7 @@ TABLE: allpets_invoice_items
   patient_species, species_group ENUM('Canine','Feline','Others'),
   invoice_date DATETIME,
   plan_category_name VARCHAR,
-  std_category VARCHAR,   -- Prescription | Laboratory | Hospitalization | Consultation | Food | Grooming | Others
+  std_category VARCHAR,
   plan_sub_category_name VARCHAR,
   item_total DECIMAL(12,2)
 
@@ -89,21 +177,25 @@ SQL RULES
 1. Always add cancelled=0 when querying allpets_invoices for revenue/counts.
 2. Always add returned=0 when querying allpets_payments.
 3. Date filter: DATE(invoice_date) BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD'
-4. New vs returning patients: use MIN(invoice_date) per patient_id from allpets_invoice_items — there is NO is_new_client or client_id column on invoices.
+4. New vs returning patients: use MIN(invoice_date) per patient_id from allpets_invoice_items.
+   There is NO is_new_client or client_id column on invoices — never use them.
 5. Stock value = SUM(onhand_qty * purchase_cost) WHERE onhand_qty > 0.
+6. Use the exact std_category and plan_sub_category_name values shown above in LIVE DATA CONTEXT.
 
 ════════════════════════════════════════════════════════════════════
 HOW TO RESPOND
 ════════════════════════════════════════════════════════════════════
 • Run SQL with execute_sql to get data. For complex requests fire multiple queries in parallel.
 • Use your own skills to build charts, dashboards, tables, or slide decks from the data returned.
-• For board meeting / PPT / presentation requests: run all needed queries in one parallel batch, then generate a complete self-contained HTML slide deck as an artifact (dark theme, Chart.js from CDN, keyboard navigation).
+• For board meeting / PPT / presentation: run all queries in one parallel batch, then generate
+  a complete self-contained HTML slide deck artifact (dark theme, Chart.js from CDN, keyboard nav).
 • Always show key numbers as formatted KPI cards alongside any chart.
-• Currency = Indian Rupees (₹). Format large numbers with commas (e.g. ₹17,38,167).`,
+• Currency = Indian Rupees (₹). Format large numbers Indian-style (e.g. ₹17,38,167).`,
+            },
           },
-        },
-      ],
-    }),
+        ],
+      };
+    },
   );
 
   // ── execute_sql ────────────────────────────────────────────────────────────
