@@ -336,40 +336,21 @@ async function runHistoricalSync(fromDateStr) {
   console.log("[Sync] Historical sync complete.");
 }
 
-// ── Schedule nightly at 2 AM IST (UTC+5:30) ──────────────────────────────────
-function scheduleNightlySync() {
-  function msUntil2amIST() {
-    const nowUTC = Date.now();
-    const nowIST = nowUTC + 5.5 * 3600 * 1000;
-    const istDate = new Date(nowIST);
-    const next2am = new Date(istDate);
-    next2am.setUTCHours(next2am.getUTCHours() - Math.floor(5.5)); // back to UTC reference
-    // Simpler: compute next 2AM IST as UTC 20:30 (prev day) + 24h = next day 20:30 UTC
-    // 2:00 IST = 20:30 UTC (previous calendar day)
-    const nowD = new Date();
-    const h = nowD.getUTCHours(),
-      m = nowD.getUTCMinutes();
-    // 2AM IST = UTC 20:30
-    let msToNext;
-    if (h < 20 || (h === 20 && m < 30)) {
-      // today's 20:30 UTC hasn't passed yet
-      const target = new Date(nowD);
-      target.setUTCHours(20, 30, 0, 0);
-      msToNext = target - nowD;
-    } else {
-      // next day's 20:30 UTC
-      const target = new Date(nowD);
-      target.setUTCDate(target.getUTCDate() + 1);
-      target.setUTCHours(20, 30, 0, 0);
-      msToNext = target - nowD;
-    }
-    return msToNext;
+// ── Schedule daily at 7 AM IST (UTC+5:30 = 01:30 UTC) ───────────────────────
+function scheduleDailySync() {
+  function msUntil7amIST() {
+    const now = new Date();
+    // 7:00 AM IST = 01:30 UTC
+    const target = new Date(now);
+    target.setUTCHours(1, 30, 0, 0);
+    if (target <= now) target.setUTCDate(target.getUTCDate() + 1);
+    return target - now;
   }
 
   function loop() {
-    const ms = msUntil2amIST();
+    const ms = msUntil7amIST();
     console.log(
-      `[Sync] Next nightly sync in ${Math.round(ms / 60000)} min (2 AM IST).`,
+      `[Sync] Next daily sync in ${Math.round(ms / 60000)} min (7 AM IST).`,
     );
     setTimeout(async () => {
       await runNightlySync();
@@ -384,6 +365,6 @@ module.exports = {
   syncDateRange,
   runNightlySync,
   runHistoricalSync,
-  scheduleNightlySync,
+  scheduleDailySync,
   refreshStock,
 };
