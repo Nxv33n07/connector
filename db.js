@@ -172,15 +172,20 @@ async function queryDashboard(fromDate, toDate) {
       [fromDate, toDate],
     ),
 
-    // 7. New vs returning customers (pre-tagged at sync time)
+    // 7. New vs returning — patient's first ever invoice date vs the selected window
     query(
       `SELECT
-             COALESCE(SUM(is_new_client),0)     AS new_clients,
-             COALESCE(SUM(1-is_new_client),0)   AS returning_clients,
-             COUNT(DISTINCT client_id)          AS total_clients
-           FROM allpets_invoices
-           WHERE DATE(invoice_date) BETWEEN ? AND ? AND cancelled=0`,
-      [fromDate, toDate],
+         SUM(CASE WHEN first_visit BETWEEN ? AND ? THEN 1 ELSE 0 END) AS new_clients,
+         SUM(CASE WHEN first_visit < ?              THEN 1 ELSE 0 END) AS returning_clients,
+         COUNT(*) AS total_clients
+       FROM (
+         SELECT patient_id, MIN(DATE(invoice_date)) AS first_visit
+         FROM allpets_invoice_items
+         WHERE patient_id != ''
+         GROUP BY patient_id
+         HAVING MAX(CASE WHEN DATE(invoice_date) BETWEEN ? AND ? THEN 1 ELSE 0 END) = 1
+       ) t`,
+      [fromDate, toDate, fromDate, fromDate, toDate],
     ),
 
     // 8-13. Stock summary + detail samples
@@ -386,9 +391,14 @@ async function queryOpportunity() {
         [from, to],
       ),
       query(
-        `SELECT COALESCE(SUM(is_new_client),0) AS new_c
-             FROM allpets_invoices WHERE DATE(invoice_date) BETWEEN ? AND ? AND cancelled=0`,
-        [from, to],
+        `SELECT COUNT(DISTINCT ii.patient_id) AS new_c
+         FROM allpets_invoice_items ii
+         JOIN (
+           SELECT patient_id, MIN(DATE(invoice_date)) AS first_date
+           FROM allpets_invoice_items WHERE patient_id != '' GROUP BY patient_id
+         ) mn ON mn.patient_id = ii.patient_id AND mn.first_date BETWEEN ? AND ?
+         WHERE DATE(ii.invoice_date) BETWEEN ? AND ? AND ii.patient_id != ''`,
+        [from, to, from, to],
       ),
       query(
         `SELECT std_category AS cat, COALESCE(SUM(item_total),0) AS revenue
@@ -436,7 +446,7 @@ async function queryDailyTrend(fromDate, toDate) {
        COUNT(*)                                    AS invoices,
        COALESCE(SUM(CASE WHEN shift='Day'   THEN invoice_amount END),0) AS day_rev,
        COALESCE(SUM(CASE WHEN shift='Night' THEN invoice_amount END),0) AS night_rev,
-       COALESCE(SUM(is_new_client),0)              AS new_clients
+       0 AS new_clients
      FROM allpets_invoices
      WHERE DATE(invoice_date) BETWEEN ? AND ? AND cancelled=0
      GROUP BY DATE(invoice_date)
@@ -449,16 +459,12 @@ async function queryDailyTrend(fromDate, toDate) {
 async function queryTopClients(fromDate, toDate, limit = 15) {
   return query(
     `SELECT
-       client_id,
-       COUNT(*)                       AS invoices,
-       COALESCE(SUM(invoice_amount),0) AS total_spend,
-       COALESCE(SUM(is_new_client),0)  AS is_new
-     FROM allpets_invoices
-     WHERE DATE(invoice_date) BETWEEN ? AND ? AND cancelled=0
-     GROUP BY client_id
-     ORDER BY total_spend DESC
-     LIMIT ?`,
-    [fromDate, toDate, limit],
+       'Anonymous' AS client_id,
+       0 AS invoices,
+       0 AS total_spend,
+       0 AS is_new
+     LIMIT 0`,
+    [],
   );
 }
 
@@ -483,16 +489,14 @@ async function queryHourlyDistribution(fromDate, toDate) {
 async function queryClientShiftPattern(fromDate, toDate) {
   return query(
     `SELECT
-       client_id,
-       COUNT(*)                                                          AS total_visits,
-       COALESCE(SUM(CASE WHEN shift='Day'   THEN 1 ELSE 0 END),0)       AS day_visits,
-       COALESCE(SUM(CASE WHEN shift='Night' THEN 1 ELSE 0 END),0)       AS night_visits,
-       COALESCE(SUM(CASE WHEN shift='Day'   THEN invoice_amount END),0) AS day_spend,
-       COALESCE(SUM(CASE WHEN shift='Night' THEN invoice_amount END),0) AS night_spend
-     FROM allpets_invoices
-     WHERE DATE(invoice_date) BETWEEN ? AND ? AND cancelled=0
-     GROUP BY client_id`,
-    [fromDate, toDate],
+       'Anonymous' AS client_id,
+       0 AS total_visits,
+       0 AS day_visits,
+       0 AS night_visits,
+       0 AS day_spend,
+       0 AS night_spend
+     LIMIT 0`,
+    [],
   );
 }
 

@@ -7,13 +7,9 @@ CREATE TABLE IF NOT EXISTS `allpets_invoices` (
   `invoice_amount` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
   `shift`         ENUM('Day','Night') NOT NULL DEFAULT 'Day',
   `cancelled`     TINYINT(1)     NOT NULL DEFAULT 0,
-  `is_new_client` TINYINT(1)     NOT NULL DEFAULT 0,
-  `client_id`     VARCHAR(64)    DEFAULT NULL,
   PRIMARY KEY (`invoice_id`),
   KEY `idx_inv_date`          (`invoice_date`),
-  KEY `idx_inv_cancelled_date` (`cancelled`, `invoice_date`),
-  KEY `idx_inv_client`        (`client_id`),
-  KEY `idx_inv_new_client`    (`is_new_client`)
+  KEY `idx_inv_cancelled_date` (`cancelled`, `invoice_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `allpets_invoice_items` (
@@ -34,7 +30,6 @@ CREATE TABLE IF NOT EXISTS `allpets_invoice_items` (
 CREATE TABLE IF NOT EXISTS `allpets_payments` (
   `payment_id`        VARCHAR(64)   NOT NULL,
   `clinic_id`         VARCHAR(64)   DEFAULT NULL,
-  `client_id`         VARCHAR(64)   DEFAULT NULL,
   `invoice_id`        VARCHAR(64)   DEFAULT NULL,
   `payment_date`      DATETIME      DEFAULT NULL,
   `payment_amount`    DECIMAL(12,2) NOT NULL DEFAULT 0.00,

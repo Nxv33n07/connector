@@ -54,7 +54,7 @@ function toVBDate(isoDate) {
 }
 
 // ── Invoices + items UPSERT ───────────────────────────────────────────────────
-async function upsertInvoices(invoices, newClientIdSet) {
+async function upsertInvoices(invoices) {
   for (const inv of invoices) {
     const invoiceId = inv.InvoiceDetails?.InvoiceId;
     if (!invoiceId) continue;
@@ -63,25 +63,21 @@ async function upsertInvoices(invoices, newClientIdSet) {
     const mysqlDate = toMysqlDt(rawDate);
     if (!mysqlDate) continue;
     const amount = safeNum(inv.InvoiceDetails?.InvoiceAmount);
-    const clientId = inv.Client?.ClientID || "";
     const hour = parseHour(rawDate);
     const shift = hour >= 9 && hour < 21 ? "Day" : "Night";
     const cancelled =
       (inv.InvoiceDetails?.Cancelled || "").toUpperCase() === "TRUE" ? 1 : 0;
-    const isNew = clientId && newClientIdSet.has(clientId) ? 1 : 0;
 
     await query(
       `INSERT INTO allpets_invoices
-         (invoice_id, invoice_date, invoice_amount, shift, cancelled, is_new_client, client_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+         (invoice_id, invoice_date, invoice_amount, shift, cancelled)
+       VALUES (?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          invoice_date   = VALUES(invoice_date),
          invoice_amount = VALUES(invoice_amount),
          shift          = VALUES(shift),
-         cancelled      = VALUES(cancelled),
-         is_new_client  = VALUES(is_new_client),
-         client_id      = VALUES(client_id)`,
-      [invoiceId, mysqlDate, amount, shift, cancelled, isNew, clientId],
+         cancelled      = VALUES(cancelled)`,
+      [invoiceId, mysqlDate, amount, shift, cancelled],
     );
 
     // Line items
@@ -135,8 +131,8 @@ async function upsertPayments(payments) {
     const returned = (p.Returned || "").toUpperCase() === "TRUE" ? 1 : 0;
     await query(
       `INSERT INTO allpets_payments
-         (payment_id, payment_date, payment_amount, returned, invoice_id, client_id, payment_type_name)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+         (payment_id, payment_date, payment_amount, returned, invoice_id, payment_type_name)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          payment_date      = VALUES(payment_date),
          payment_amount    = VALUES(payment_amount),
@@ -148,7 +144,6 @@ async function upsertPayments(payments) {
         safeNum(p.PaymentAmount),
         returned,
         p.Invoice?.InvoiceID || null,
-        p.Client?.ClientID || null,
         p.PaymentType?.PaymentTypeName || null,
       ],
     );
@@ -268,29 +263,9 @@ async function syncDateRange(fromDate, toDate) {
     max_pages: 10,
   });
 
-  // Pull new clients per date group (deterministic tag)
-  const dateSet = new Set(
-    invoices
-      .map((inv) => (inv.InvoiceDetails?.InvoiceDate || "").split(" ")[0])
-      .filter(Boolean),
-  );
+  // Removed client pulling logic
 
-  const newClientIdSet = new Set();
-  for (const datePart of dateSet) {
-    try {
-      const nc = await vb.getClients({
-        startdate: datePart,
-        enddate: datePart,
-        searchon: "firstactive",
-        max_pages: 3,
-      });
-      for (const c of nc) if (c.ClientID) newClientIdSet.add(c.ClientID);
-    } catch (_) {
-      // non-fatal — is_new_client will just default to 0
-    }
-  }
-
-  await upsertInvoices(invoices, newClientIdSet);
+  await upsertInvoices(invoices);
   await upsertPayments(payments);
 
   // Log the sync window

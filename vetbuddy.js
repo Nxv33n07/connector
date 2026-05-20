@@ -132,7 +132,6 @@ async function fetchAll(params) {
 
 // ── Read API ──────────────────────────────────────────────────────────────────
 const getClinics = (p = {}) => fetchAll({ action: "clinic", ...p });
-const getClients = (p = {}) => fetchAll({ action: "clients", ...p });
 const getPatients = (p = {}) => fetchAll({ action: "patients", ...p });
 const getAppointments = (p = {}) => fetchAll({ action: "appointment", ...p });
 const getInvoices = (p = {}) => fetchAll({ action: "invoice", ...p });
@@ -155,11 +154,6 @@ async function getStaffAvailability(availabilitydate, clinicid) {
   return deepClean(res.data?.StaffRotas?.StaffAvailability || null);
 }
 
-async function getClientAccountSummary(clientid) {
-  const res = await apiGet({ action: "clientaccsummary", clientid }, 15000);
-  return deepClean(res.data?.ClientAccountSummary || null);
-}
-
 // ── Push API ──────────────────────────────────────────────────────────────────
 function parseResponse(text) {
   const p = (text || "").trim().split("|");
@@ -180,37 +174,6 @@ async function pushXML(slug, xml) {
   return parseResponse(res.data);
 }
 const cd = (v) => `<![CDATA[${v || ""}]]>`;
-
-async function createClient(c) {
-  return pushXML(
-    "client",
-    `<?xml version="1.0" encoding="UTF-8"?>
-<DataXML Action='insert' Type='Client' App='CRM'><Client>
-  <ClinicName>${cd(c.ClinicName)}</ClinicName><CRMClientID>${cd(c.CRMClientID || "")}</CRMClientID>
-  <FirstName>${cd(c.FirstName)}</FirstName><LastName>${cd(c.LastName)}</LastName>
-  <HomePhone>${cd(c.HomePhone || "")}</HomePhone><Address1>${cd(c.Address1 || "")}</Address1>
-  <Address2>${cd(c.Address2 || "")}</Address2><City>${cd(c.City || "")}</City>
-  <Zip>${cd(c.Zip || "")}</Zip><State>${cd(c.State || "")}</State>
-  <Email>${cd(c.Email || "")}</Email><MobilePhone>${cd(c.MobilePhone || "")}</MobilePhone>
-  <Status>${c.Status || "Active"}</Status>
-</Client></DataXML>`,
-  );
-}
-
-async function updateClient(c) {
-  return pushXML(
-    "client",
-    `<?xml version="1.0" encoding="UTF-8"?>
-<DataXML Action='modify' Type='Client' App='CRM'><Client>
-  <ClinicName>${cd(c.ClinicName)}</ClinicName><CRMClientID>${cd(c.CRMClientID || "")}</CRMClientID>
-  <ClientID>${c.ClientID}</ClientID><FirstName>${cd(c.FirstName || "")}</FirstName>
-  <LastName>${cd(c.LastName || "")}</LastName><MobilePhone>${cd(c.MobilePhone || "")}</MobilePhone>
-  <Email>${cd(c.Email || "")}</Email><Address1>${cd(c.Address1 || "")}</Address1>
-  <City>${cd(c.City || "")}</City><State>${cd(c.State || "")}</State><Zip>${cd(c.Zip || "")}</Zip>
-  <Status>${c.Status || "Active"}</Status>
-</Client></DataXML>`,
-  );
-}
 
 async function createPatient(p) {
   return pushXML(
@@ -288,7 +251,6 @@ async function cancelAppointment(a) {
 module.exports = {
   getToken,
   getClinics,
-  getClients,
   getPatients,
   getAppointments,
   getInvoices,
@@ -301,9 +263,6 @@ module.exports = {
   getPatientDx,
   getAppointmentTypes,
   getStaffAvailability,
-  getClientAccountSummary,
-  createClient,
-  updateClient,
   createPatient,
   updatePatient,
   createAppointment,
