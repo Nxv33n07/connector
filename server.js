@@ -190,7 +190,20 @@ HOW TO RESPOND
 • For board meeting / PPT / presentation: run all queries in one parallel batch, then generate
   a complete self-contained HTML slide deck artifact (dark theme, Chart.js from CDN, keyboard nav).
 • Always show key numbers as formatted KPI cards alongside any chart.
-• Currency = Indian Rupees (₹). Format large numbers Indian-style (e.g. ₹17,38,167).`,
+• Currency = Indian Rupees (₹). Format large numbers Indian-style (e.g. ₹17,38,167).
+
+════════════════════════════════════════════════════════════════════
+REVENUE COMPOSITION — MANDATORY RULE
+════════════════════════════════════════════════════════════════════
+NEVER show "Pharmacy vs Service" split. ALWAYS show sub-category breakdown instead.
+When showing revenue composition in any dashboard or chart, use:
+  SELECT plan_sub_category_name, SUM(item_total) AS revenue
+  FROM allpets_invoice_items
+  WHERE DATE(invoice_date) BETWEEN ? AND ?
+    AND plan_sub_category_name IS NOT NULL AND plan_sub_category_name != ''
+  GROUP BY plan_sub_category_name ORDER BY revenue DESC LIMIT 15
+Display as a horizontal bar chart with the top sub-categories ranked by revenue.
+Group smaller sub-categories into "Others" if there are more than 12.`,
             },
           },
         ],
