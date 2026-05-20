@@ -172,6 +172,22 @@ TABLE: allpets_stock
   stock_status ENUM('adequate','low','out','negative')
 
 ════════════════════════════════════════════════════════════════════
+⚠ REVENUE SOURCE — MOST CRITICAL RULE
+════════════════════════════════════════════════════════════════════
+There are TWO revenue columns in the DB. Using the wrong one gives ~2× inflated numbers.
+
+  ✅ allpets_invoices.invoice_amount  → AUTHORITATIVE REVENUE
+     This is what the client actually paid. Use this for ALL revenue totals,
+     KPI cards, monthly trends, YoY comparisons, and any "total revenue" figure.
+     Always filter: cancelled=0
+
+  ❌ allpets_invoice_items.item_total → CATEGORY BREAKDOWN ONLY
+     This is the gross price of each line item BEFORE invoice-level discounts/
+     adjustments. SUM(item_total) will be significantly higher than invoice_amount.
+     Use ONLY for: species split, category split, sub-category split, item-level analysis.
+     NEVER use SUM(item_total) as a total revenue figure.
+
+═══════════════════════════════════════════════════════════════════
 SQL RULES
 ════════════════════════════════════════════════════════════════════
 1. Always add cancelled=0 when querying allpets_invoices for revenue/counts.
@@ -199,6 +215,7 @@ Replace <FROM> and <TO> with the requested period dates (e.g. 2026-04-01 / 2026-
 Replace <PREV_FROM> and <PREV_TO> with the prior period (same duration, one month/year back).
 
 Q1 — Summary KPIs (current + prior period for delta):
+  -- SOURCE: allpets_invoices.invoice_amount — the only correct revenue source
   SELECT
     SUM(CASE WHEN DATE(invoice_date) BETWEEN '<FROM>' AND '<TO>' AND cancelled=0 THEN invoice_amount END) AS revenue,
     COUNT(CASE WHEN DATE(invoice_date) BETWEEN '<FROM>' AND '<TO>' AND cancelled=0 THEN 1 END) AS invoices,
@@ -263,6 +280,7 @@ Q7 — Weekly trend (opportunity — last 8 weeks):
   GROUP BY week_start ORDER BY week_start
 
 Q8 — Monthly trend (last 13 months):
+  -- SOURCE: allpets_invoices.invoice_amount — NEVER use item_total for this
   SELECT DATE_FORMAT(invoice_date,'%Y-%m') AS month,
     SUM(invoice_amount) AS revenue, COUNT(*) AS invoices
   FROM allpets_invoices
