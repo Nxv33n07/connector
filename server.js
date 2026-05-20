@@ -291,33 +291,82 @@ Q10 — Stock mismatch (negative = system says below zero — physical vs system
   ORDER BY stock_status, onhand_qty ASC LIMIT 30
 
 ════════════════════════════════════════════════════════════════════
-DASHBOARD LAYOUT (build as single HTML artifact after all 10 queries return)
+OUTPUT QUALITY — YOU ARE THE FRONTEND ENGINEER
 ════════════════════════════════════════════════════════════════════
-Dark theme (#0f172a background). Use Chart.js from CDN. Sections:
+The MCP gives you the raw data. YOU build the visual output using your
+full HTML/CSS/JavaScript skills. Make it stunning — production quality,
+not a draft. Every output must look like a professional SaaS dashboard.
 
-1. SUMMARY ROW — KPI cards: Total Revenue | Total Invoices | Avg/Invoice | Active Days | Cancellations
-   Each card shows current value + delta % vs prior period (green up / red down arrow).
+DESIGN SYSTEM:
+  Background      : #0f172a  (deep navy)
+  Card background : #1e293b  (slate)
+  Card border     : 1px solid #334155
+  Card radius     : 14px
+  Primary accent  : #6366f1  (indigo)
+  Success/up      : #22c55e  (green)
+  Danger/down     : #ef4444  (red)
+  Warning         : #f59e0b  (amber)
+  Text primary    : #f1f5f9
+  Text muted      : #94a3b8
+  Font            : 'Inter', system-ui, sans-serif (load from Google Fonts)
+  Chart.js        : https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js
+  Chart labels plugin: https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2/dist/chartjs-plugin-datalabels.min.js
 
-2. DAY vs NIGHT — donut or stacked bar showing invoice count and revenue by shift.
+LAYOUT RULES:
+  • Responsive CSS grid — cards auto-wrap on smaller screens.
+  • KPI cards: icon + big number + label + delta badge (↑ green / ↓ red).
+  • Section headers: ALL CAPS, 11px letter-spacing, muted color, thin divider line below.
+  • Charts: always set responsive:true, maintainAspectRatio:false, explicit container height.
+  • Tooltips: show ₹ formatted values and % where relevant.
+  • Numbers: Indian comma format — use toLocaleString('en-IN').
+  • Currency prefix ₹ on all money values.
+  • Negative/mismatch items: highlight rows in amber (#f59e0b20 background).
+  • Smooth entrance animation: @keyframes fadeIn on cards (0.3s ease).
 
-3. SPECIES — 3 cards (Canine / Feline / Others): revenue, unique patients, avg/visit vs overall avg.
-   Add a bar chart comparing avg/visit across species.
+════════════════════════════════════════════════════════════════════
+DASHBOARD SECTIONS (build as one self-contained HTML artifact)
+════════════════════════════════════════════════════════════════════
 
-4. CATEGORY SPLIT — horizontal bar chart: Prescription | Laboratory | Hospitalization |
-   Consultation | Food | Grooming | Others — sorted by revenue, showing % of total.
+HEADER: Clinic name + period + "Live via VetBuddy MCP" badge (pulsing green dot).
 
-5. SUB-CATEGORY SALES — horizontal bar chart top 20, colored by std_category.
+1. SUMMARY KPIs — 5 cards in a row:
+   Total Revenue | Total Invoices | Avg Revenue/Invoice | Active Days | Cancellations
+   Each card: large number, delta % badge vs prior period, trend arrow.
 
-6. NEW vs RETURNING PET PARENTS — stacked bar: new patients vs returning patients + revenue split.
+2. DAY vs NIGHT SPLIT — side-by-side:
+   • Donut chart: invoice count by shift (Day / Night)
+   • Donut chart: revenue by shift
+   Below each: the exact numbers as labels.
 
-7. OPPORTUNITY — two charts side by side:
-   • Weekly trend (last 8 weeks) — bar chart with revenue + invoice count line overlay
-   • Monthly trend (last 13 months) — line chart
+3. SPECIES BREAKDOWN — 3 column cards (Canine / Feline / Others):
+   Each card: species icon, revenue, unique patients, visits, avg/visit.
+   Below cards: grouped bar chart — avg revenue/visit per species vs overall avg line.
 
-8. INVENTORY — summary cards: Closing Value | Food Value | Low Stock | Out of Stock | Mismatches.
-   Table of negative/out stock items (stock name, qty, value, clinic) — these are system vs physical mismatches.
+4. CATEGORY SPLIT — horizontal bar chart (full width):
+   Prescription | Laboratory | Hospitalization | Consultation | Food | Grooming | Others
+   Each bar shows revenue + % of total as a label at the end.
+   Color each category differently (indigo, cyan, emerald, orange, pink, yellow, slate).
 
-Currency = ₹ Indian format. All numbers with Indian comma formatting.`,
+5. SUB-CATEGORY SALES — horizontal bar chart (top 20):
+   Bars colored by their std_category using the same palette as above.
+   Show revenue value label at end of each bar.
+
+6. NEW vs RETURNING PET PARENTS — two metrics side by side:
+   • Stacked bar: new patient count vs returning patient count per month (last 6 months if available, else current period).
+   • Revenue donut: new revenue vs returning revenue with amounts.
+   Below: 2 stat cards — "New Pet Parents: N  ₹X" and "Returning: N  ₹X".
+
+7. OPPORTUNITY TRENDS — two charts side by side:
+   • Weekly (last 8 weeks): bar chart for revenue, line overlay for invoice count. Dual Y-axis.
+   • Monthly (last 13 months): smooth line chart for revenue with area fill.
+   Title: "Opportunity Areas — spot growth and decline patterns".
+
+8. INVENTORY — 4 summary cards: Closing Stock Value | Food Stock Value | Low Stock SKUs | Mismatches.
+   Below: table of negative/out-of-stock items with columns:
+   Item Name | Clinic | Category | On-Hand Qty | Value | Status
+   Highlight negative qty rows in amber. Title: "⚠ System vs Physical Stock Discrepancies".
+
+Currency = ₹ Indian format (toLocaleString('en-IN')). All charts use the design system above.`,
             },
           },
         ],
