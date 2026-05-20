@@ -1,6 +1,7 @@
 /**
  * sync.js — VetBuddy → RDS sync engine
- * All analytical tables are populated here. Run on boot and nightly at 2 AM IST.
+ * Pulls invoices, payments, and stock from VetBuddy API and upserts into RDS.
+ * Runs on server boot (checkpoint from last known date) and daily at 7 AM IST.
  */
 
 const vb = require("./vetbuddy.js");
@@ -26,7 +27,7 @@ function toMysqlDt(s) {
   return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")} ${parts[1] || "00:00:00"}`;
 }
 
-// "MM/DD/YYYY HH:MM:SS" → hour integer (0–23)
+// "MM/DD/YYYY HH:MM:SS" → hour integer 0–23; defaults to 9 (morning) if unparseable
 function parseHour(s) {
   if (!s || !s.includes(" ")) return 9;
   const h = parseInt((s.split(" ")[1] || "00").split(":")[0], 10);
@@ -47,7 +48,7 @@ function getSpeciesGroup(sp) {
   return "Others";
 }
 
-// VetBuddy uses MM/DD/YYYY; db.js uses YYYY-MM-DD
+// YYYY-MM-DD → MM/DD/YYYY (VetBuddy date format)
 function toVBDate(isoDate) {
   const [y, m, d] = isoDate.split("-");
   return `${m}/${d}/${y}`;
@@ -62,60 +63,107 @@ async function upsertInvoices(invoices) {
     const rawDate = inv.InvoiceDetails?.InvoiceDate || "";
     const mysqlDate = toMysqlDt(rawDate);
     if (!mysqlDate) continue;
+
     const amount = safeNum(inv.InvoiceDetails?.InvoiceAmount);
     const hour = parseHour(rawDate);
     const shift = hour >= 9 && hour < 21 ? "Day" : "Night";
     const cancelled =
       (inv.InvoiceDetails?.Cancelled || "").toUpperCase() === "TRUE" ? 1 : 0;
 
+    // Extended invoice fields — try multiple possible paths in the VetBuddy response
+    const invoiceNo =
+      inv.InvoiceDetails?.InvoiceNo ||
+      inv.InvoiceDetails?.InvoiceNumber ||
+      null;
+    const clinicId =
+      inv.InvoiceDetails?.ClinicId || inv.Clinic?.ClinicID || null;
+    const clinicName =
+      inv.InvoiceDetails?.ClinicName || inv.Clinic?.ClinicName || null;
+    const clientName =
+      inv.InvoiceDetails?.ClientName ||
+      inv.Client?.ClientName ||
+      inv.ClientDetails?.ClientName ||
+      null;
+    const mobilePhone =
+      inv.InvoiceDetails?.MobilePhone ||
+      inv.Client?.MobilePhone ||
+      inv.Client?.Mobile ||
+      inv.ClientDetails?.MobilePhone ||
+      null;
+
     await query(
       `INSERT INTO allpets_invoices
-         (invoice_id, invoice_date, invoice_amount, shift, cancelled)
-       VALUES (?, ?, ?, ?, ?)
+         (invoice_id, invoice_no, clinic_id, clinic_name, client_name, mobile_phone,
+          invoice_date, invoice_amount, shift, cancelled)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
+         invoice_no     = VALUES(invoice_no),
+         clinic_id      = VALUES(clinic_id),
+         clinic_name    = VALUES(clinic_name),
+         client_name    = VALUES(client_name),
+         mobile_phone   = VALUES(mobile_phone),
          invoice_date   = VALUES(invoice_date),
          invoice_amount = VALUES(invoice_amount),
          shift          = VALUES(shift),
          cancelled      = VALUES(cancelled)`,
-      [invoiceId, mysqlDate, amount, shift, cancelled],
+      [
+        invoiceId,
+        invoiceNo,
+        clinicId,
+        clinicName,
+        clientName,
+        mobilePhone,
+        mysqlDate,
+        amount,
+        shift,
+        cancelled,
+      ],
     );
 
-    // Line items
+    // Line items — one row per item per patient per invoice
     const patArr = toArray(inv.Patients?.Patient);
     for (const pat of patArr) {
       const patientId = pat.PatientId || "";
-      const sp = getSpeciesGroup(
-        pat.PatientSpecies || pat.Species?.SpeciesName,
-      );
+      const patientName = pat.PatientName || null;
+      const patientSpecies =
+        pat.PatientSpecies || pat.Species?.SpeciesName || null;
+      const speciesGroup = getSpeciesGroup(patientSpecies);
 
       const itemArr = toArray(pat.Items?.Item);
       for (const item of itemArr) {
         const salesId = item.SalesID || item.ItemID || "";
         const itemTotal = safeNum(item.Total || item.ItemAmount);
-        const rawCat = item.PlanItem?.PlanCategory?.PlanCategoryName || "";
+        const planCat = item.PlanItem?.PlanCategory?.PlanCategoryName || null;
         const subCat =
           item.PlanItem?.PlanSubCategory?.PlanSubCategoryName || null;
-        const stdCat = getStdCat(rawCat);
+        const stdCat = getStdCat(planCat || "");
 
         await query(
           `INSERT INTO allpets_invoice_items
-             (invoice_id, invoice_date, item_total, species_group,
-              std_category, plan_sub_category_name, sales_id, patient_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             (invoice_id, invoice_date, sales_id, patient_id, patient_name,
+              patient_species, species_group, plan_category_name, std_category,
+              plan_sub_category_name, item_total)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON DUPLICATE KEY UPDATE
              item_total             = VALUES(item_total),
+             patient_name           = VALUES(patient_name),
+             patient_species        = VALUES(patient_species),
              species_group          = VALUES(species_group),
+             plan_category_name     = VALUES(plan_category_name),
              std_category           = VALUES(std_category),
              plan_sub_category_name = VALUES(plan_sub_category_name)`,
           [
             invoiceId,
             mysqlDate,
-            itemTotal,
-            sp,
-            stdCat,
-            subCat,
             salesId,
             patientId,
+            patientName,
+            patientSpecies,
+            speciesGroup,
+            planCat,
+            stdCat,
+            subCat,
+            itemTotal,
           ],
         );
       }
@@ -150,16 +198,12 @@ async function upsertPayments(payments) {
   }
 }
 
-// ── Stock: atomic swap — DELETE + re-INSERT inside a transaction ──────────────
-// Using DELETE (DML) instead of TRUNCATE (DDL) so the entire swap is atomic:
-// readers see either the complete old snapshot or the complete new one, never partial.
+// ── Stock: full atomic refresh inside a transaction ───────────────────────────
+// DELETE + re-INSERT so readers always see a complete snapshot, never partial.
 async function refreshStock() {
   console.log("[Sync] Refreshing stock snapshot...");
-  // Removed max_pages cap to load all ~9200 SKUs
   const stock = await vb.getStock();
-  console.log(
-    `[Sync] Fetched ${stock.length} total SKUs from VetBuddy. Preparing batch insert...`,
-  );
+  console.log(`[Sync] Fetched ${stock.length} SKUs from VetBuddy.`);
 
   const conn = await pool.getConnection();
   try {
@@ -174,7 +218,6 @@ async function refreshStock() {
 
       const clinicId = s.Clinic?.ClinicID || null;
       const clinicName = s.Clinic?.ClinicName || null;
-
       const oh = safeNum(s.OnhandQty);
       const th = safeNum(s.ThresholdQty);
       const cost = safeNum(
@@ -194,7 +237,7 @@ async function refreshStock() {
         name,
         planCat,
         subCat,
-        getStdCat(planCat),
+        getStdCat(planCat || ""),
         oh,
         th,
         cost,
@@ -202,39 +245,25 @@ async function refreshStock() {
       ]);
     }
 
-    // Performance optimization: Batch insert 1,000 items at a time to maximize speed
     const chunkSize = 1000;
     for (let i = 0; i < rows.length; i += chunkSize) {
       const chunk = rows.slice(i, i + chunkSize);
-      const placeholders = chunk
-        .map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .join(", ");
-      const flatParams = chunk.flat();
-
+      const placeholders = chunk.map(() => "(?,?,?,?,?,?,?,?,?,?,?)").join(",");
       await conn.execute(
         `INSERT INTO allpets_stock
            (stock_id, clinic_id, clinic_name, stock_name, plan_category_name,
             plan_sub_category_name, std_category, onhand_qty, threshold_qty,
             purchase_cost, stock_status)
-         VALUES ${placeholders}
-         ON DUPLICATE KEY UPDATE
-           stock_name             = VALUES(stock_name),
-           clinic_name            = VALUES(clinic_name),
-           onhand_qty             = VALUES(onhand_qty),
-           threshold_qty          = VALUES(threshold_qty),
-           purchase_cost          = VALUES(purchase_cost),
-           stock_status           = VALUES(stock_status)`,
-        flatParams,
+         VALUES ${placeholders}`,
+        chunk.flat(),
       );
       console.log(
-        ` -> Batched: ${Math.min(i + chunkSize, rows.length)} / ${rows.length} inserted.`,
+        ` -> Stock batch: ${Math.min(i + chunkSize, rows.length)} / ${rows.length}`,
       );
     }
 
     await conn.commit();
-    console.log(
-      `[Sync] Stock fully refreshed: ${rows.length} items committed.`,
-    );
+    console.log(`[Sync] Stock refreshed: ${rows.length} SKUs committed.`);
   } catch (e) {
     await conn.rollback();
     throw e;
@@ -244,34 +273,31 @@ async function refreshStock() {
   return stock.length;
 }
 
-// ── Core: sync a date range (invoices + payments + clients) ──────────────────
+// ── Sync a date range: invoices + payments ────────────────────────────────────
 async function syncDateRange(fromDate, toDate) {
   const from = toVBDate(fromDate);
   const to = toVBDate(toDate);
-
-  console.log(`[Sync] ${fromDate} → ${toDate} ...`);
+  console.log(`[Sync] ${fromDate} → ${toDate}`);
 
   const invoices = await vb.getInvoices({
     startdate: from,
     enddate: to,
     max_pages: 20,
   });
-  await new Promise((r) => setTimeout(r, 1000));
+  await new Promise((r) => setTimeout(r, 1000)); // brief pause between API calls
   const payments = await vb.getPayments({
     startpaymentdate: from,
     endpaymentdate: to,
     max_pages: 10,
   });
 
-  // Removed client pulling logic
-
   await upsertInvoices(invoices);
   await upsertPayments(payments);
 
-  // Log the sync window
   await query(
     `INSERT INTO allpets_sync_log (sync_type, sync_date, completed_at, status, records_upserted)
-     VALUES ('range', ?, NOW(), 'success', ?)`,
+     VALUES ('range', ?, NOW(), 'success', ?)
+     ON DUPLICATE KEY UPDATE completed_at=NOW(), status='success', records_upserted=VALUES(records_upserted)`,
     [fromDate, invoices.length + payments.length],
   );
 
@@ -280,22 +306,18 @@ async function syncDateRange(fromDate, toDate) {
   );
 }
 
-// ── Checkpoint-based sync: from last known date in DB → today ────────────────
-// Industry-standard ETL pattern: never assume a fixed window.
-// The DB tells us where it left off; we fill exactly that gap.
-// Handles any absence — 1 day or 100 days — with no duplicates and no gaps.
+// ── Checkpoint sync: last known DB date → today ───────────────────────────────
+// Fills exactly the gap since last sync — handles 1 day or 100 days gracefully.
 async function runNightlySync() {
   console.log("[Sync] Starting checkpoint sync...");
   const fmt = (d) => d.toISOString().slice(0, 10);
   const today = fmt(new Date());
 
   try {
-    // Ask the DB: what is the latest invoice date we already have?
     const [row] = await query(
-      `SELECT DATE_FORMAT(MAX(DATE(invoice_date)), '%Y-%m-%d') AS last_date
-       FROM allpets_invoices`,
+      `SELECT DATE_FORMAT(MAX(DATE(invoice_date)), '%Y-%m-%d') AS last_date FROM allpets_invoices`,
     );
-    // If DB is empty fall back to 30 days ago so first-run gets useful data
+    // Fall back to 30 days ago on first run so there's immediately useful data
     const fromDate =
       row?.last_date || fmt(new Date(Date.now() - 30 * 86400000));
 
@@ -308,7 +330,8 @@ async function runNightlySync() {
   }
 }
 
-// ── Historical sync: fromDate → today in 7-day chunks ─────────────────────────
+// ── Historical sync: fromDate → today in 7-day chunks ────────────────────────
+// Use this once on go-live to backfill all historical data.
 async function runHistoricalSync(fromDateStr) {
   const fmt = (d) => d.toISOString().slice(0, 10);
   const today = fmt(new Date());
@@ -336,11 +359,10 @@ async function runHistoricalSync(fromDateStr) {
   console.log("[Sync] Historical sync complete.");
 }
 
-// ── Schedule daily at 7 AM IST (UTC+5:30 = 01:30 UTC) ───────────────────────
+// ── Schedule daily at 7 AM IST (= 01:30 UTC) ─────────────────────────────────
 function scheduleDailySync() {
   function msUntil7amIST() {
     const now = new Date();
-    // 7:00 AM IST = 01:30 UTC
     const target = new Date(now);
     target.setUTCHours(1, 30, 0, 0);
     if (target <= now) target.setUTCDate(target.getUTCDate() + 1);
